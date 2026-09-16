@@ -48,7 +48,12 @@ import java.util.Random;
  * merged-area outline only, no per-tile fill underneath (see renderFishingZoneOutline/
  * renderArenaOutline/renderColorGroupedOutlines) -- Sandwich Rush's tiles never change color, and
  * a Jad's own zone has a huge 3D model standing on top of it either way, so an individual fill per
- * tile would just be noise in both cases. Turf Wars' own TURF_WARS_TILE
+ * tile would just be noise in both cases. Brutus Attack's own BRUTUS_ATTACK_TILE arena gets that
+ * same one-merged-outline-per-color treatment for all three of its own regions -- Brutus's own
+ * zone, the targets' own zone, and the neutral corridor between them, each server-colored (see
+ * minigames/brutus_attack.py's own doc) so each reads as one clean lane rather than a
+ * checkerboard of individually-outlined tiles, even though Brutus actually runs down the middle
+ * one. Turf Wars' own TURF_WARS_TILE
  * grid also gets that same merged arena outline, but keeps an individual fill-only tile underneath
  * it (renderTurfWarsTile) since each tile's own color is real, meaningful state (which team
  * claimed it) -- all outlines still share roundedInsetPolygon so their corners read exactly the
@@ -135,6 +140,11 @@ public class TileOverlay extends Overlay
     // Crab Rave's own arena outline -- a hot pink, matching CrabRaveTile's own served color_hex
     // (#E91E8C), so the arena floor's outline and the tile-type legend agree.
     private static final Color CRAB_RAVE_ARENA_OUTLINE_COLOR = new Color(233, 30, 140, 190);
+    // Brutus Attack's own "crash zone" highlight -- a bright orange, deliberately distinct from
+    // all three of the arena's own base colors (red/blue/white), so the exact tiles that counted
+    // as a hit for the current round's own dash are unmistakable. See renderBrutusAttackCrashZone.
+    private static final Color BRUTUS_CRASH_ZONE_FILL_COLOR = new Color(255, 140, 0, 170);
+    private static final Color BRUTUS_CRASH_ZONE_OUTLINE_COLOR = new Color(255, 140, 0, 230);
     // A small "club lighting" palette for Crab Rave's own randomly-flashing dance-floor cells (see
     // renderCrabRaveTile/computeCrabRaveLitColors) -- purely decorative, saturated neon colors
     // meant to read as disco lights rather than anything meaningful to click or avoid.
@@ -268,6 +278,7 @@ public class TileOverlay extends Overlay
             if ("REPEAT_AFTER_ME_TILE".equals(entry.tileType)) { renderRepeatAfterMeTile(g, entry, repeatAfterMeTiles); continue; } // fill only (peek/lit cells), no per-tile outline -- see renderRepeatAfterMeTile
             if ("CRAB_RAVE_TILE".equals(entry.tileType)) { renderCrabRaveTile(g, entry, crabRaveTiles, crabRaveLitColors); continue; } // fill only (randomly-flashing "club light" cells), no per-tile outline -- see renderCrabRaveTile
             if ("JADDY_TILE".equals(entry.tileType)) continue; // rendered as one merged-zone outline per color instead, see renderColorGroupedOutlines below -- a Jad's own zone is a fixed-color area a huge model stands on top of, not a walked path, so a per-tile fill/outline would just be noise under it
+            if ("BRUTUS_ATTACK_TILE".equals(entry.tileType)) continue; // Brutus's own zone, the targets' own zone, and the neutral corridor between them each render as one merged outline instead, see renderColorGroupedOutlines below -- same reasoning JADDY_TILE's own two zones already get. Every one of this type is server-colored now (see minigames/brutus_attack.py's own CORRIDOR_COLOR), so this always skips, unlike JADDY_TILE's own no-color-at-all fallback.
             if ("TURF_WARS_TILE".equals(entry.tileType)) { renderTurfWarsTile(g, entry); continue; } // fill only, no per-tile outline, see renderTurfWarsTile
             // Also gated on isMinigameSelectionRevealed() -- isRainbowRushActive() alone flips true
             // the instant MINIGAME_STARTED lands, well before the client's own selection wheel has
@@ -287,6 +298,8 @@ public class TileOverlay extends Overlay
         renderArenaOutline(g, entries, "REPEAT_AFTER_ME_TILE", REPEAT_AFTER_ME_ARENA_OUTLINE_COLOR);
         renderArenaOutline(g, entries, "CRAB_RAVE_TILE", CRAB_RAVE_ARENA_OUTLINE_COLOR);
         renderColorGroupedOutlines(g, entries, "JADDY_TILE");
+        renderColorGroupedOutlines(g, entries, "BRUTUS_ATTACK_TILE");
+        renderBrutusAttackCrashZone(g);
 
         goldenGnomeModel.update(entries);
         coinTrapModel.update(entries);
@@ -379,6 +392,40 @@ public class TileOverlay extends Overlay
         for (Map.Entry<String, List<TileReducer.TileEntry>> group : byColor.entrySet())
         {
             renderBoundingBoxOutline(g, group.getValue(), resolveColor(group.getKey(), tileType));
+        }
+    }
+
+    /** Highlights the exact tiles that would eliminate a target standing on them for the CURRENT
+     * round's own dash, the instant Brutus's dash lands -- see RunePartyPlugin#
+     * getBrutusAttackCrashZoneTiles, computed directly from his own reported landing tile plus
+     * BRUTUS_HITBOX_RADIUS_TILES rather than from anything in the reducer's own tile snapshot, so
+     * (unlike every other render method in this class) this needs no `entries` at all -- same
+     * per-point LocalPoint/Polygon lookup renderTurfWarsTile's own fill uses, just driven from
+     * plugin-supplied WorldPoints instead of a TileEntry. Empty (and so a no-op) until a dash
+     * actually lands, and cleared again the instant the next round's own arrival gate resets it
+     * (see BrutusAttackPresentation's own dashLandedPosition doc). */
+    private void renderBrutusAttackCrashZone(Graphics2D g)
+    {
+        if (!plugin.isBrutusAttackActive()) return;
+        List<WorldPoint> tiles = plugin.getBrutusAttackCrashZoneTiles();
+        if (tiles.isEmpty()) return;
+
+        for (WorldPoint wp : tiles)
+        {
+            for (WorldPoint local : WorldPoint.toLocalInstance(client.getTopLevelWorldView(), wp))
+            {
+                LocalPoint lp = LocalPoint.fromWorld(client.getTopLevelWorldView(), local);
+                if (lp == null) continue;
+
+                Polygon poly = Perspective.getCanvasTilePoly(client, lp);
+                if (poly == null) continue;
+
+                g.setColor(BRUTUS_CRASH_ZONE_FILL_COLOR);
+                g.fill(roundedInsetPolygon(poly, TILE_OUTLINE_INSET_PX, TILE_OUTLINE_CORNER_RADIUS_PX));
+                g.setColor(BRUTUS_CRASH_ZONE_OUTLINE_COLOR);
+                g.setStroke(SOLID_STROKE);
+                g.draw(roundedInsetPolygon(poly, TILE_OUTLINE_INSET_PX, TILE_OUTLINE_CORNER_RADIUS_PX));
+            }
         }
     }
 

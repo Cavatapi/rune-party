@@ -14,8 +14,8 @@ import java.util.concurrent.TimeUnit;
 
 public class ApiClient
 {
-    // static final String BASE_URL = "http://localhost:8005/runeparty";
-    static final String BASE_URL = "https://runeparty.shrunk.studio/runeparty";
+    static final String BASE_URL = "http://localhost:8005/runeparty";
+    // static final String BASE_URL = "https://runeparty.shrunk.studio/runeparty";
 
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
@@ -227,6 +227,96 @@ public class ApiClient
         }
     }
 
+    /** One-shot, position-free "I've reached my own required zone" ready-check for Brutus Attack
+     * -- fired once, the instant the local client detects standing on its own required zone's
+     * colored tile, rather than a continuous heartbeat like reportMinigamePosition. See
+     * BrutusAttackPresentation#onTick, the only caller. */
+    public void confirmBrutusArrival(String gameId, String playerRsn, String playerToken) throws IOException
+    {
+        JsonObject body = new JsonObject();
+        body.addProperty("player", playerRsn);
+
+        try (Response resp = post("/v1/games/" + gameId + "/confirm-brutus-arrival", body, playerToken))
+        {
+            String raw = bodyString(resp);
+            if (!resp.isSuccessful()) throw new ApiHttpException(resp.code(), "Confirm Brutus arrival failed (" + resp.code() + "): " + raw);
+        }
+    }
+
+    /** One-shot "I just entered the target zone" report for Brutus Attack -- fired once, only by
+     * whichever client is currently transformed into Brutus, the instant it detects its own
+     * position landing on a target-zone tile. Broadcast back out to every other seated client,
+     * which each independently check their own real position against it -- see
+     * BrutusAttackPresentation#onTick (the report) and #apply (the check on the receiving end),
+     * and confirmBrutusElimination below (what a hit actually reports). */
+    public void confirmBrutusDash(String gameId, String playerRsn, String playerToken, int x, int y, int plane) throws IOException
+    {
+        JsonObject body = new JsonObject();
+        body.addProperty("player", playerRsn);
+        body.addProperty("x", x);
+        body.addProperty("y", y);
+        body.addProperty("plane", plane);
+
+        try (Response resp = post("/v1/games/" + gameId + "/confirm-brutus-dash", body, playerToken))
+        {
+            String raw = bodyString(resp);
+            if (!resp.isSuccessful()) throw new ApiHttpException(resp.code(), "Confirm Brutus dash failed (" + resp.code() + "): " + raw);
+        }
+    }
+
+    /** A target's own one-shot self-report that Brutus's dash just landed on it -- fired only when
+     * this client's own local check (BrutusAttackPresentation#apply, reacting to
+     * confirmBrutusDash's own broadcasted report) found a match against its own real position. */
+    public void confirmBrutusElimination(String gameId, String playerRsn, String playerToken) throws IOException
+    {
+        JsonObject body = new JsonObject();
+        body.addProperty("player", playerRsn);
+
+        try (Response resp = post("/v1/games/" + gameId + "/confirm-brutus-elimination", body, playerToken))
+        {
+            String raw = bodyString(resp);
+            if (!resp.isSuccessful()) throw new ApiHttpException(resp.code(), "Confirm Brutus elimination failed (" + resp.code() + "): " + raw);
+        }
+    }
+
+    /** A target's own one-shot self-report that it walked off its required zone's tiles after
+     * already arriving there this round, while the round was actually active -- fired only by
+     * BrutusAttackPresentation#onTick's own local check (dashWindowOpenThisRound gates it, so the
+     * pre-round gather/setup phase never triggers this). Deliberately a separate call from
+     * confirmBrutusElimination above, even though both settle into the same eliminatedRsns set --
+     * Brutus didn't actually do anything here, so this one must never flash "HIT!"; the mini-game
+     * just carries on silently unless this emptied out every remaining target. */
+    public void confirmBrutusTargetLeftZone(String gameId, String playerRsn, String playerToken) throws IOException
+    {
+        JsonObject body = new JsonObject();
+        body.addProperty("player", playerRsn);
+
+        try (Response resp = post("/v1/games/" + gameId + "/confirm-brutus-target-left-zone", body, playerToken))
+        {
+            String raw = bodyString(resp);
+            if (!resp.isSuccessful()) throw new ApiHttpException(resp.code(), "Confirm Brutus target left zone failed (" + resp.code() + "): " + raw);
+        }
+    }
+
+    /** Brutus's own one-shot self-report that he's stepped completely off the arena (any of his
+     * own zone, the neutral corridor, or the targets' zone) before reaching the target zone this
+     * round -- fired only by whichever client is currently transformed into Brutus, the instant it
+     * detects its own position off every BRUTUS_ATTACK_TILE. See BrutusAttackPresentation#onTick,
+     * the only caller, and RunePartyPlugin#findBrutusAttackArenaTiles for the combined tile set
+     * checked against. Server-side, this cuts the round short as an immediate "MISS!" rather than
+     * a bespoke event of its own -- see brutus_out_of_bounds's own doc on the server. */
+    public void confirmBrutusOutOfBounds(String gameId, String playerRsn, String playerToken) throws IOException
+    {
+        JsonObject body = new JsonObject();
+        body.addProperty("player", playerRsn);
+
+        try (Response resp = post("/v1/games/" + gameId + "/confirm-brutus-out-of-bounds", body, playerToken))
+        {
+            String raw = bodyString(resp);
+            if (!resp.isSuccessful()) throw new ApiHttpException(resp.code(), "Confirm Brutus out-of-bounds failed (" + resp.code() + "): " + raw);
+        }
+    }
+
     /** Submits the local player's final Fishing Contest catch tally. Fired once per round, when
      * the local 30-second timer elapses -- a one-shot report, unlike reportMinigamePosition's
      * per-tick heartbeat. */
@@ -360,6 +450,39 @@ public class ApiClient
         {
             String raw = bodyString(resp);
             if (!resp.isSuccessful()) throw new IOException("Bow to Jad failed (" + resp.code() + "): " + raw);
+        }
+    }
+
+    /** Resolves a pending Wise Old Man encounter -- action is "steal_coins", "steal_golden_gnome",
+     * or "decline"; target is the rsn to steal from (required for either steal action, ignored for
+     * decline). 409s if no encounter is pending for this player, or if the server's own
+     * affordability/ownership re-check rejects a steal the dialogue shouldn't have offered in the
+     * first place. */
+    public void wiseOldManChoose(String gameId, String playerRsn, String playerToken, String action, String target) throws IOException
+    {
+        JsonObject body = new JsonObject();
+        body.addProperty("player", playerRsn);
+        body.addProperty("action", action);
+        if (target != null) body.addProperty("target", target);
+
+        try (Response resp = post("/v1/games/" + gameId + "/wise-old-man-choose", body, playerToken))
+        {
+            String raw = bodyString(resp);
+            if (!resp.isSuccessful()) throw new IOException("Wise Old Man choice failed (" + resp.code() + "): " + raw);
+        }
+    }
+
+    public void itemShopChoose(String gameId, String playerRsn, String playerToken, String action, String itemKey) throws IOException
+    {
+        JsonObject body = new JsonObject();
+        body.addProperty("player", playerRsn);
+        body.addProperty("action", action);
+        if (itemKey != null) body.addProperty("itemKey", itemKey);
+
+        try (Response resp = post("/v1/games/" + gameId + "/item-shop-choose", body, playerToken))
+        {
+            String raw = bodyString(resp);
+            if (!resp.isSuccessful()) throw new IOException("Item Shop choice failed (" + resp.code() + "): " + raw);
         }
     }
 

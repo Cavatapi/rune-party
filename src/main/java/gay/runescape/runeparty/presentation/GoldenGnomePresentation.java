@@ -77,6 +77,22 @@ public final class GoldenGnomePresentation
                 break;
             }
 
+            case Events.GOLDEN_GNOME_PURCHASE_FAILED:
+            {
+                // Nothing actually changed -- no coins spent, no gnome gained, so no popup, just
+                // the outcome banner (same mechanism/screen slot GOLDEN_GNOME_PURCHASED's own
+                // "You got a Golden Gnome!" uses, see renderGoldenGnomeOutcome's own "failed"
+                // branch) so every seated client sees "You/<rsn> can't afford a Golden Gnome!"
+                // instead of the buyer's own request just getting a raw 409 in their chat log.
+                if (!catchingUp)
+                {
+                    String rsn = Json.requiredStr(e.payload, type, "player");
+                    plugin.armBanner(outcome, RunePartyPlugin.GOLDEN_GNOME_OUTCOME_BANNER_DURATION_MS,
+                        () -> new OutcomePayload("failed", rsn), true);
+                }
+                break;
+            }
+
             case Events.GOLDEN_GNOME_LOST:
             {
                 // Two causes share this exact event/shape -- Jad's smash penalty (taken instead of
@@ -195,12 +211,12 @@ public final class GoldenGnomePresentation
     public WorldPoint getMoveNewPoint() { return moveNewPoint; }
     public long getMoveShowNewAt() { return moveShowNewAt; }
 
-    /** Payload for the Golden Gnome purchase outcome banner ("You got a Golden Gnome!"). outcome
-     * is always "purchased" in practice -- carried as a real field rather than a hardcoded string
-     * only because renderGoldenGnomeOutcome still checks it explicitly. */
+    /** Payload for the Golden Gnome purchase outcome banner -- "You got a Golden Gnome!" on
+     * "purchased" (GOLDEN_GNOME_PURCHASED), "You can't afford a Golden Gnome!" on "failed"
+     * (GOLDEN_GNOME_PURCHASE_FAILED) -- see renderGoldenGnomeOutcome's own text/color branches. */
     private static final class OutcomePayload
     {
-        final String outcome; // "purchased", always -- see this class's own doc
+        final String outcome; // "purchased" | "failed" -- see this class's own doc
         final String rsn;
 
         OutcomePayload(String outcome, String rsn)

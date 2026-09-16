@@ -31,6 +31,33 @@ final class RunePartyRender
         return merged != null ? merged.light() : null;
     }
 
+    /** Same merge/retry contract as {@link #loadNpcModel}, but from {@link
+     * NPCComposition#getChatheadModels()} instead of {@link NPCComposition#getModels()} -- the
+     * real, separate model resource the game's own dialogue interface uses for this NPC's
+     * portrait (already framed/posed for a close-up, unlike the full overworld model), for
+     * ChatheadRenderer to project into a 2D portrait. Returns null (not just for "not cached yet,"
+     * but permanently) for an NPC with no chathead models at all, same as an absent
+     * NPCComposition -- callers should treat both identically. */
+    static Model loadNpcChatheadModel(Client client, int npcId)
+    {
+        NPCComposition comp = client.getNpcDefinition(npcId);
+        if (comp == null) return null;
+
+        int[] modelIds = comp.getChatheadModels();
+        if (modelIds == null || modelIds.length == 0) return null;
+
+        ModelData[] parts = new ModelData[modelIds.length];
+        for (int i = 0; i < modelIds.length; i++)
+        {
+            ModelData part = client.loadModelData(modelIds[i]);
+            if (part == null) return null; // not cached yet -- caller retries next frame
+            parts[i] = part;
+        }
+
+        ModelData merged = parts.length == 1 ? parts[0] : client.mergeModels(parts);
+        return merged.light();
+    }
+
     /** Same merge as {@link #loadNpcModel}, but returns the raw, pre-lit {@link ModelData} instead
      * of a finished {@link Model} -- for a caller that needs to recolor every face first (see
      * models/CoinTrapModel#buildGoldModel's own doc on why recoloring needs the raw data, not a

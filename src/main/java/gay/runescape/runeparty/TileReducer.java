@@ -19,7 +19,7 @@ public class TileReducer
         public final String tileType;
         public final String color;
         public final Integer orientation; // nullable -- reserved for future directional tiles
-        public final Integer pathIndex; // nullable -- null only for a non-course decorative marker; every PATH/START/GOLDEN_GNOME_TILE/EVENT_TILE/JAD_TILE has one
+        public final Integer pathIndex; // nullable -- null only for a non-course decorative marker; every PATH/START/GOLDEN_GNOME_TILE/ITEM_SHOP_TILE/JAD_TILE has one
         /** This tile's own outgoing edges (pathIndex values) -- its only ones. Empty means a dead
          * end, not an implied "next tile in line" -- every edge, including a plain "continue to the
          * next tile" one, has to be set explicitly via "Connect From"/"Connect To". */

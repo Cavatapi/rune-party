@@ -9,6 +9,8 @@ import gay.runescape.runeparty.presentation.ChanceSpacePresentation;
 import gay.runescape.runeparty.presentation.GoldenGnomePresentation;
 import gay.runescape.runeparty.presentation.ItemPresentation;
 import gay.runescape.runeparty.presentation.JadPresentation;
+import gay.runescape.runeparty.presentation.WiseOldManPresentation;
+import gay.runescape.runeparty.presentation.ItemShopPresentation;
 import gay.runescape.runeparty.presentation.MinigamePresentation;
 import gay.runescape.runeparty.net.MinigameReward;
 import gay.runescape.runeparty.net.MinigameScore;
@@ -39,14 +41,19 @@ import gay.runescape.runeparty.overlays.DanceDanceRuneScapeOverlay;
 import gay.runescape.runeparty.overlays.FishingCatchOverlay;
 import gay.runescape.runeparty.overlays.HardcodedCourseLauncherOverlay;
 import gay.runescape.runeparty.overlays.HotPotatoOverlay;
+import gay.runescape.runeparty.overlays.ItemShopDialogueOverlay;
+import gay.runescape.runeparty.overlays.ItemShopNpcOverlay;
 import gay.runescape.runeparty.overlays.JadEncounter;
 import gay.runescape.runeparty.overlays.JaddyDuelModel;
 import gay.runescape.runeparty.overlays.PlayerOverlay;
+import gay.runescape.runeparty.overlays.PlayerTransformOverlay;
 import gay.runescape.runeparty.overlays.RunePartyMapOverlay;
 import gay.runescape.runeparty.overlays.SandwichRushHudOverlay;
 import gay.runescape.runeparty.overlays.StatsOverlay;
 import gay.runescape.runeparty.overlays.TileOverlay;
 import gay.runescape.runeparty.overlays.TurfWarsScoreOverlay;
+import gay.runescape.runeparty.overlays.WiseOldManDialogueOverlay;
+import gay.runescape.runeparty.overlays.WiseOldManNpcOverlay;
 import java.awt.Color;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -92,6 +99,8 @@ import net.runelite.api.gameval.SpotanimID;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.game.SpriteManager;
+import net.runelite.client.input.MouseManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
@@ -412,6 +421,34 @@ public class RunePartyPlugin extends Plugin
     // not the crab's own listed standingAnimation of 12480 (see CrabRaveNpcOverlay's own doc)
     public static final int GEMSTONE_CRAB_IDLE_ANIMATION_ID = 12483;
 
+    /** Client-side key for Brutus Attack -- must match the server's own registration
+     * (minigames/brutus_attack.py). One random seated player is transformed into Brutus -- a real
+     * NPC model rendered on a real Player, via PlayerComposition#setTransformedNpcId (see
+     * overlays/PlayerTransformOverlay, the only consumer) -- for the whole round; everyone else has
+     * to reach the far end of a 12x3 arena before Brutus can dash across and crash into them (see
+     * brutus_attack.py's own doc). Deliberately NOT added to {@link #MINIGAMES_NEEDING_CONTINUOUS_POSITION}/
+     * {@link #MINIGAMES_NEEDING_PRE_ROUND_POSITION} -- unlike Arena/Turf Wars/Jaddy, this
+     * mini-game needs no live position feed from the server's own poll loop at all; each client
+     * instead watches its own position locally and fires a one-shot confirm-brutus-arrival/
+     * confirm-brutus-dash report only at the moment it actually matters (see
+     * BrutusAttackPresentation#onTick).
+     * <p>
+     * Same hex values as the server's own brutus_attack.py BRUTUS_ZONE_COLOR/TARGET_ZONE_COLOR --
+     * kept in sync by hand, same convention Turf Wars' own team colors already use. */
+    public static final String BRUTUS_ATTACK_KEY = "brutus-attack";
+    public static final String BRUTUS_ZONE_COLOR_HEX = "#CC2222";
+    public static final String BRUTUS_TARGET_ZONE_COLOR_HEX = "#2266CC";
+
+    /** Brutus's own transformed model renders noticeably larger than the single real tile his
+     * underlying Player object actually occupies (PlayerComposition#setTransformedNpcId only swaps
+     * what model draws at his own true WorldLocation, see PlayerTransformOverlay's own doc) --
+     * observed in-game to render roughly a 1x3 footprint (1 tile wide, 3 tiles long, centered on
+     * his own true tile), long axis matched up with the corridor's own direction of travel. Used by
+     * {@link #isLocalPlayerHitByBrutusDash}, which every other seated client calls on itself the
+     * instant it receives Brutus's own broadcasted dash-landing report -- the elimination decision
+     * lives entirely here now, not on the server (see minigames/brutus_attack.py's own doc). */
+    public static final int BRUTUS_HITBOX_RADIUS_TILES = 1;
+
     /** How long each light of Rainbow Rush's own "traffic light" get-ready sequence stays lit --
      * red, then orange, then green (see AnnouncementOverlay#renderRainbowRushTrafficLight) --
      * purely a client-local animation, timed off MINIGAME_ROUND_BEGIN's own arrival timestamp
@@ -574,6 +611,75 @@ public class RunePartyPlugin extends Plugin
      * the toll is never seen being deducted mid-sentence, before the announcement's even done
      * fading. */
     public static final long JAD_OUTCOME_BANNER_DURATION_MS = GOLDEN_GNOME_OUTCOME_BANNER_DURATION_MS;
+
+    // The Wise Old Man himself (RuneMonk npc id 2108), and the animation he idles on while
+    // standing beside his own tile (WiseOldManNpcOverlay, the only reader of either).
+    public static final int WISE_OLD_MAN_NPC_ID = 2108;
+    public static final int WISE_OLD_MAN_IDLE_ANIMATION_ID = 813;
+    // Loosely paired with the server's own WISE_OLD_MAN_GNOME_STEAL_COST (app.py), not protocol-
+    // coupled -- see WiseOldManDialogueOverlay, the only reader: purely so the dialogue doesn't
+    // even offer the "steal a Golden Gnome" option when the local player can't afford it, same
+    // "the server still re-checks for real" reasoning hoveredPurchasableGoldenGnomePoint's own doc
+    // gives for its own affordability guard.
+    public static final int WISE_OLD_MAN_GNOME_STEAL_COST = 73;
+
+    /** How long AnnouncementOverlay's Wise Old Man outcome banner stays up -- "<thief> stole N
+     * coins from <victim>!"/"...a Golden Gnome from <victim>!" -- fired on WISE_OLD_MAN_STOLEN,
+     * same duration/queuing shape JAD_OUTCOME_BANNER_DURATION_MS's own doc describes. No banner at
+     * all for a decline/timeout -- only a real steal is announced. */
+    public static final long WISE_OLD_MAN_OUTCOME_BANNER_DURATION_MS = GOLDEN_GNOME_OUTCOME_BANNER_DURATION_MS;
+
+    // The Item Shop's own shopkeeper (RuneMonk npc id 2151), and the animation he idles on while
+    // standing beside his own tile (ItemShopNpcOverlay, the only reader of either). 808 (a generic
+    // stand-idle) is a placeholder, same "will adjust later" status the prices below carry -- swap
+    // it for whatever this NPC's real idle animation turns out to be.
+    public static final int ITEM_SHOP_NPC_ID = 2151;
+    public static final int ITEM_SHOP_NPC_IDLE_ANIMATION_ID = 808;
+    // Loosely paired with the server's own ItemTile.ITEM_CAP (tiles/item_tile.py), not protocol-
+    // coupled -- see ItemShopDialogueOverlay, the only reader: purely so the dialogue doesn't even
+    // offer an item the server would reject as "not enough room to hold another item", same
+    // "the server still re-checks for real" reasoning WISE_OLD_MAN_GNOME_STEAL_COST's own doc
+    // gives for its own affordability guard.
+    public static final int ITEM_CAP = 3;
+
+    /** One item this Item Shop sells -- itemKey matches the server's own items/__init__.py
+     * REGISTRY (see Items.java, the client-side twin) so the dialogue can pull each item's real
+     * display name/effect description straight from there rather than duplicating them here.
+     * price is loosely paired with the server's own ITEM_SHOP_CATALOG (app.py), not protocol-
+     * coupled -- see ItemShopDialogueOverlay, the only reader: purely so the dialogue shows the
+     * right price and can grey out (well, just skip) anything the local player can't afford, same
+     * "the server still re-checks for real" reasoning WISE_OLD_MAN_GNOME_STEAL_COST's own doc
+     * gives for its own affordability guard. */
+    public static final class ItemShopEntry
+    {
+        public final String itemKey;
+        public final int price;
+
+        public ItemShopEntry(String itemKey, int price)
+        {
+            this.itemKey = itemKey;
+            this.price = price;
+        }
+    }
+
+    // V1 placeholder prices, all in the 7-15 coin range -- not yet host-configurable or balanced
+    // against each item's own real power, same "placeholder, will adjust later" status
+    // GOLDEN_GNOME_PRICE started at. Order/keys/prices must match the server's own
+    // ITEM_SHOP_CATALOG (app.py) exactly.
+    public static final List<ItemShopEntry> ITEM_SHOP_CATALOG = List.of(
+        new ItemShopEntry("energy-potion", 7),
+        new ItemShopEntry("gnome-glider", 9),
+        new ItemShopEntry("coin-trap", 10),
+        new ItemShopEntry("tele-block", 12),
+        new ItemShopEntry("tele-home", 15)
+    );
+
+    /** How long AnnouncementOverlay's Item Shop outcome banner stays up -- "You/<rsn> purchased
+     * <item>!"/"You/<rsn> can't afford <item>!" -- fired on ITEM_SHOP_PURCHASED/
+     * ITEM_SHOP_PURCHASE_FAILED, same duration/queuing shape GOLDEN_GNOME_OUTCOME_BANNER_DURATION_MS's
+     * own doc describes. No banner at all for a decline/timeout -- only a real purchase attempt
+     * (successful or not) is announced. */
+    public static final long ITEM_SHOP_OUTCOME_BANNER_DURATION_MS = GOLDEN_GNOME_OUTCOME_BANNER_DURATION_MS;
 
     /** How long AnnouncementOverlay's "CHANCE TILE!" title card stays up before the three-icon
      * tableau below takes over -- same single-line-title treatment/duration idiom as
@@ -761,6 +867,8 @@ public class RunePartyPlugin extends Plugin
     @Inject private RunePartyConfig config;
     @Inject private ClientToolbar clientToolbar;
     @Inject private OverlayManager overlayManager;
+    @Inject private MouseManager mouseManager; // WiseOldManDialogueOverlay's own clickable options, the only consumer
+    @Inject private SpriteManager spriteManager; // the real chatbox background sprite, same consumer
     @Inject private ModelOutlineRenderer modelOutlineRenderer;
     @Inject private TooltipManager tooltipManager;
     @Inject private OkHttpClient okHttpClient;
@@ -777,6 +885,11 @@ public class RunePartyPlugin extends Plugin
     private JaddyDuelModel jaddyDuelModel;
     private CrabRaveNpcOverlay crabRaveNpcOverlay;
     private CrabRaveHudOverlay crabRaveHudOverlay;
+    private WiseOldManNpcOverlay wiseOldManNpcOverlay;
+    private WiseOldManDialogueOverlay wiseOldManDialogueOverlay;
+    private ItemShopNpcOverlay itemShopNpcOverlay;
+    private ItemShopDialogueOverlay itemShopDialogueOverlay;
+    private PlayerTransformOverlay playerTransformOverlay;
     private FishingCatchOverlay fishingCatchOverlay;
     private ClickClickClickOverlay clickClickClickOverlay;
     private HotPotatoOverlay hotPotatoOverlay;
@@ -799,6 +912,8 @@ public class RunePartyPlugin extends Plugin
     private ItemPresentation itemPresentation;
     private MinigamePresentation minigamePresentation;
     private JadPresentation jadPresentation;
+    private WiseOldManPresentation wiseOldManPresentation;
+    private ItemShopPresentation itemShopPresentation;
     private ChanceSpacePresentation chanceSpacePresentation;
     // Neither of these two is a "Presentation" -- both own real interactive behavior (building
     // RuneLite menu entries, issuing mark/unmark-tiles requests; making create/join/session API
@@ -1151,6 +1266,8 @@ public class RunePartyPlugin extends Plugin
         itemPresentation = new ItemPresentation(this);
         minigamePresentation = new MinigamePresentation(this);
         jadPresentation = new JadPresentation(this);
+        wiseOldManPresentation = new WiseOldManPresentation(this);
+        itemShopPresentation = new ItemShopPresentation(this);
         chanceSpacePresentation = new ChanceSpacePresentation(this);
         courseBuilder = new CourseBuilder(this);
         sessionManager = new SessionManager(this);
@@ -1184,6 +1301,23 @@ public class RunePartyPlugin extends Plugin
 
         crabRaveHudOverlay = new CrabRaveHudOverlay(this);
         overlayManager.add(crabRaveHudOverlay);
+
+        wiseOldManNpcOverlay = new WiseOldManNpcOverlay(client, this);
+        overlayManager.add(wiseOldManNpcOverlay);
+
+        wiseOldManDialogueOverlay = new WiseOldManDialogueOverlay(client, this, mouseManager, spriteManager, rosterReducer);
+        overlayManager.add(wiseOldManDialogueOverlay);
+        wiseOldManDialogueOverlay.register();
+
+        itemShopNpcOverlay = new ItemShopNpcOverlay(client, this);
+        overlayManager.add(itemShopNpcOverlay);
+
+        itemShopDialogueOverlay = new ItemShopDialogueOverlay(client, this, mouseManager, spriteManager, rosterReducer);
+        overlayManager.add(itemShopDialogueOverlay);
+        itemShopDialogueOverlay.register();
+
+        playerTransformOverlay = new PlayerTransformOverlay(client, this);
+        overlayManager.add(playerTransformOverlay);
 
         fishingCatchOverlay = new FishingCatchOverlay(this);
         overlayManager.add(fishingCatchOverlay);
@@ -1252,7 +1386,12 @@ public class RunePartyPlugin extends Plugin
         if (jadEncounter != null) { jadEncounter.clear(); overlayManager.remove(jadEncounter); }
         if (jaddyDuelModel != null) { jaddyDuelModel.clear(); overlayManager.remove(jaddyDuelModel); }
         if (crabRaveNpcOverlay != null) { crabRaveNpcOverlay.clear(); overlayManager.remove(crabRaveNpcOverlay); }
+        if (wiseOldManNpcOverlay != null) { wiseOldManNpcOverlay.clear(); overlayManager.remove(wiseOldManNpcOverlay); }
+        if (wiseOldManDialogueOverlay != null) { wiseOldManDialogueOverlay.unregister(); overlayManager.remove(wiseOldManDialogueOverlay); }
+        if (itemShopNpcOverlay != null) { itemShopNpcOverlay.clear(); overlayManager.remove(itemShopNpcOverlay); }
+        if (itemShopDialogueOverlay != null) { itemShopDialogueOverlay.unregister(); overlayManager.remove(itemShopDialogueOverlay); }
         if (crabRaveHudOverlay != null) overlayManager.remove(crabRaveHudOverlay);
+        if (playerTransformOverlay != null) { playerTransformOverlay.clear(); overlayManager.remove(playerTransformOverlay); }
         if (fishingCatchOverlay != null) overlayManager.remove(fishingCatchOverlay);
         if (clickClickClickOverlay != null) overlayManager.remove(clickClickClickOverlay);
         if (hotPotatoOverlay != null) overlayManager.remove(hotPotatoOverlay);
@@ -1671,7 +1810,7 @@ public class RunePartyPlugin extends Plugin
      * &lt;item&gt;" entry. Refuses silently rather than arming a placement that'd only 409 anyway. */
     public void beginItemPlacement(String itemKey)
     {
-        if (itemKey == null || !isLocalPlayerReadyToRoll() || isItemUsedThisTurn()) return;
+        if (itemKey == null || !isLocalPlayerReadyToUseItem() || isItemUsedThisTurn()) return;
         if (!Items.get(itemKey).requiresPlacement()) return;
         itemPlacementKey = itemKey;
         refreshPanel();
@@ -1733,7 +1872,7 @@ public class RunePartyPlugin extends Plugin
      * right-click-a-tile (see addItemTargetMenuEntry/confirmItemTargetOn). */
     public void beginItemTargeting(String itemKey)
     {
-        if (itemKey == null || !isLocalPlayerReadyToRoll() || isItemUsedThisTurn()) return;
+        if (itemKey == null || !isLocalPlayerReadyToUseItem() || isItemUsedThisTurn()) return;
         if (!Items.get(itemKey).requiresTarget()) return;
         itemTargetKey = itemKey;
         refreshPanel();
@@ -2048,6 +2187,33 @@ public class RunePartyPlugin extends Plugin
         return points;
     }
 
+    /** Every currently-marked Wise Old Man tile -- see WiseOldManNpcOverlay, the only reader: a
+     * real, host-placed course stop (unlike GoldenGnomeTile/CoinTrapTile), so unlike those two
+     * there could be more than one on the same board. Same "the reducer is the one source of
+     * truth," scanned-on-demand shape findRepeatAfterMeTilePoints already follows. */
+    public List<WorldPoint> findWiseOldManTilePoints()
+    {
+        List<WorldPoint> points = new ArrayList<>();
+        for (TileReducer.TileEntry entry : tileReducer.snapshot())
+        {
+            if ("WISE_OLD_MAN_TILE".equals(entry.tileType)) points.add(entry.point);
+        }
+        return points;
+    }
+
+    /** Every currently-marked Item Shop tile -- see ItemShopNpcOverlay, the only caller. Same
+     * "the reducer is the one source of truth," scanned-on-demand shape findWiseOldManTilePoints
+     * above already follows. */
+    public List<WorldPoint> findItemShopTilePoints()
+    {
+        List<WorldPoint> points = new ArrayList<>();
+        for (TileReducer.TileEntry entry : tileReducer.snapshot())
+        {
+            if ("ITEM_SHOP_TILE".equals(entry.tileType)) points.add(entry.point);
+        }
+        return points;
+    }
+
     /** Every currently-marked Crab Rave arena tile, if the board's actually swapped to it -- see
      * CrabRavePresentation#onDanceFinished (bounding-box "am I in the zone" check) and
      * CrabRaveNpcOverlay (crab spawn-point placement), the only readers. Same "the reducer is the
@@ -2059,6 +2225,51 @@ public class RunePartyPlugin extends Plugin
         for (TileReducer.TileEntry entry : tileReducer.snapshot())
         {
             if ("CRAB_RAVE_TILE".equals(entry.tileType)) points.add(entry.point);
+        }
+        return points;
+    }
+
+    /** Every currently-marked Brutus Attack tile colored as Brutus's own zone (red) -- see
+     * BrutusAttackPresentation#onTick, the only reader: the local client checks its own position
+     * against this list to decide when to fire its own one-shot confirm-brutus-arrival report.
+     * Same "the reducer is the one source of truth," scanned-on-demand shape
+     * findCrabRaveTilePoints/findRepeatAfterMeTilePoints already follow -- just filtered by color
+     * on top of tileType, since every Brutus Attack tile shares one type but differs by zone. */
+    public List<WorldPoint> findBrutusZoneTiles()
+    {
+        List<WorldPoint> points = new ArrayList<>();
+        for (TileReducer.TileEntry entry : tileReducer.snapshot())
+        {
+            if ("BRUTUS_ATTACK_TILE".equals(entry.tileType) && BRUTUS_ZONE_COLOR_HEX.equalsIgnoreCase(entry.color)) points.add(entry.point);
+        }
+        return points;
+    }
+
+    /** Every currently-marked Brutus Attack tile colored as the targets' own zone (blue) -- see
+     * findBrutusZoneTiles' own doc for the shape this mirrors. Read both by every non-Brutus
+     * client (to confirm their own arrival) and by whichever client is Brutus (to confirm a dash
+     * landing). */
+    public List<WorldPoint> findBrutusTargetZoneTiles()
+    {
+        List<WorldPoint> points = new ArrayList<>();
+        for (TileReducer.TileEntry entry : tileReducer.snapshot())
+        {
+            if ("BRUTUS_ATTACK_TILE".equals(entry.tileType) && BRUTUS_TARGET_ZONE_COLOR_HEX.equalsIgnoreCase(entry.color)) points.add(entry.point);
+        }
+        return points;
+    }
+
+    /** Every currently-marked Brutus Attack tile regardless of zone color -- Brutus's own red zone,
+     * the neutral white corridor, and the targets' blue zone combined, i.e. the whole arena. See
+     * BrutusAttackPresentation#onTick, the only reader: the locally-assigned Brutus checks his own
+     * position against this set once the round is actually active, and self-reports
+     * confirmBrutusOutOfBounds the instant he's standing on none of them. */
+    public List<WorldPoint> findBrutusAttackArenaTiles()
+    {
+        List<WorldPoint> points = new ArrayList<>();
+        for (TileReducer.TileEntry entry : tileReducer.snapshot())
+        {
+            if ("BRUTUS_ATTACK_TILE".equals(entry.tileType)) points.add(entry.point);
         }
         return points;
     }
@@ -2096,13 +2307,20 @@ public class RunePartyPlugin extends Plugin
         if (self == null || gid == null || token == null) return;
 
         // Set the instant a genuine attempt goes out, not on the response -- see
-        // goldenGnomePurchasedThisTurn's own doc. A "can't afford this" 409 never reaches the
-        // client as an event, so waiting for GOLDEN_GNOME_PURCHASED alone would leave the menu
-        // entry offered again on the very next right-click after a failed attempt.
+        // goldenGnomePurchasedThisTurn's own doc. Most rejection reasons (not reachable, already
+        // purchased this turn, ...) never reach the client as an event, so waiting for
+        // GOLDEN_GNOME_PURCHASED alone would leave the menu entry offered again on the very next
+        // right-click after a failed attempt.
         goldenGnomePurchasedThisTurn = true;
 
-        submitAction("Purchase Golden Gnome", () -> apiClient.purchaseGoldenGnome(gid, self, token, point.getX(), point.getY(), point.getPlane()),
-            e -> addChatMessage("Failed to purchase the Golden Gnome: " + e.getMessage()));
+        // No chat-message failure callback -- an insufficient-funds 409 (by far the only reachable
+        // rejection here, since the menu entry itself already pre-filters every other reason, see
+        // addGoldenGnomePurchaseMenuEntry's own doc) now also fires GOLDEN_GNOME_PURCHASE_FAILED,
+        // which GoldenGnomePresentation turns into a proper "You can't afford a Golden Gnome!"
+        // on-screen announcement instead -- a raw 409 chat line on top of that would just be
+        // redundant noise. Any other, genuinely unexpected failure still gets logged (see
+        // submitAction's own doc), just not surfaced to chat.
+        submitAction("Purchase Golden Gnome", () -> apiClient.purchaseGoldenGnome(gid, self, token, point.getX(), point.getY(), point.getPlane()));
     }
 
     // -------------------------------------------------------------------------
@@ -2254,6 +2472,17 @@ public class RunePartyPlugin extends Plugin
         if (isCrabRaveActive())
         {
             minigamePresentation.crabRave().onTick(selfPlayer);
+        }
+
+        // Also independent of the turn engine below -- Brutus Attack's own one-shot
+        // confirm-brutus-arrival/confirm-brutus-dash reports both live inside this one call (see
+        // BrutusAttackPresentation#onTick), replacing what a continuous position-ping mini-game
+        // would otherwise need from onGameTick's own position-heartbeat check above -- this
+        // mini-game is deliberately NOT in MINIGAMES_NEEDING_CONTINUOUS_POSITION/
+        // _PRE_ROUND_POSITION at all (see BRUTUS_ATTACK_KEY's own doc).
+        if (isBrutusAttackActive())
+        {
+            minigamePresentation.brutusAttack().onTick(selfPlayer);
         }
 
         // Also independent of the turn engine below -- unlike a rolled destination (pendingRoll,
@@ -2609,6 +2838,31 @@ public class RunePartyPlugin extends Plugin
         return standingOnTrackedPositionCached;
     }
 
+    /** Whether the local player could actually use/place/target an item right now -- the real
+     * "ready to act" window the server's own _require_ready_to_act enforces for use-item/
+     * use-item-on-player (app.py): their own turn, no roll pending, no mini-game running, and no
+     * Jad/Wise Old Man encounter open. Deliberately NOT isLocalPlayerReadyToRoll() itself, even
+     * though RunePartyPanel's own item buttons used to be gated on that: standingOnTrackedPosition
+     * is a real requirement for physically performing the Spin emote to roll, but items have no
+     * such requirement server-side at all -- a player who's simply walked a few tiles away from
+     * where their turn started (toward the Wise Old Man, say, or just wandering) would still have
+     * every item button wrongly greyed out under that check, even though the server would happily
+     * accept the request. jadPresentation/wiseOldManPresentation's own encounterRsn getters are
+     * checked directly here rather than relying on standingOnTrackedPositionCached to incidentally
+     * cover that window the way isLocalPlayerReadyToRoll() effectively does (landing on either
+     * tile is itself a move away from the turn's own tracked start position) -- since this method
+     * drops that check entirely, the encounter gate has to be explicit instead. */
+    public boolean isLocalPlayerReadyToUseItem()
+    {
+        if (phase != GamePhase.ACTIVE || pendingRoll || minigamePresentation.isActive()) return false;
+        if (jadPresentation.getEncounterRsn() != null || wiseOldManPresentation.getEncounterRsn() != null
+            || itemShopPresentation.getEncounterRsn() != null) return false;
+        if (System.currentTimeMillis() < turnEffectGateUntil) return false;
+
+        String self = localRsn();
+        return self != null && self.equalsIgnoreCase(currentTurnRsn);
+    }
+
     /** Whether the local player needs to walk back to their own tracked board position before they
      * can roll again -- it's their turn, no roll is pending, no mini-game is running, and they're
      * not currently standing where TURN_STARTED left them (e.g. they wandered off toward the
@@ -2939,7 +3193,7 @@ public class RunePartyPlugin extends Plugin
         long delay = turnEffectGateUntil > now ? (turnEffectGateUntil - now) + POST_TURN_EFFECT_GRACE_MS : 0;
         extendTurnEffectGate(now + delay + durationMs);
 
-        // The panel (isLocalPlayerReadyToRoll-gated item/roll UI) only ever refreshes on an
+        // The panel (isLocalPlayerReadyToUseItem/isLocalPlayerReadyToRoll-gated item/roll UI) only ever refreshes on an
         // explicit refreshPanel() call, unlike AnnouncementOverlay's per-frame render() -- so
         // without this, once turnEffectGateUntil lifts here with no new server event to trigger a
         // refresh, the item-use section/SPIN-adjacent panel state can go stale indefinitely. Fire
@@ -3294,6 +3548,23 @@ public class RunePartyPlugin extends Plugin
                 break;
             }
 
+            case Events.WISE_OLD_MAN_ENCOUNTER_OPENED:
+            case Events.WISE_OLD_MAN_STOLEN:
+            case Events.WISE_OLD_MAN_DISMISSED:
+            {
+                wiseOldManPresentation.apply(e, catchingUp);
+                break;
+            }
+
+            case Events.ITEM_SHOP_ENCOUNTER_OPENED:
+            case Events.ITEM_SHOP_PURCHASED:
+            case Events.ITEM_SHOP_PURCHASE_FAILED:
+            case Events.ITEM_SHOP_DISMISSED:
+            {
+                itemShopPresentation.apply(e, catchingUp);
+                break;
+            }
+
             case Events.JADDY_ATTACK_TRIGGERED:
             {
                 // Purely cosmetic, no real state to fold -- this never touches a presentation class
@@ -3403,6 +3674,25 @@ public class RunePartyPlugin extends Plugin
                 break;
             }
 
+            case Events.BRUTUS_PLAYER_ELIMINATED:
+            {
+                // minigamePresentation.apply folds the elimination itself (eliminatedRsns)
+                // unconditionally -- real state, needed immediately even for a catching-up client
+                // so PlayerOverlay's own skull indicator is correct from the first frame, same
+                // shape HOT_POTATO_EXPLODED's own case above uses. No spotanim of its own -- a
+                // chat message is enough of a one-shot reveal for this one.
+                minigamePresentation.apply(e, catchingUp);
+                if (!catchingUp)
+                {
+                    String eliminatedRsn = Json.requiredStr(e.payload, type, "player");
+                    if (eliminatedRsn != null)
+                    {
+                        addChatMessage("Brutus crashed into " + eliminatedRsn + "! They're eliminated from this round.");
+                    }
+                }
+                break;
+            }
+
             case Events.GOLDEN_GNOME_MOVED:
             {
                 goldenGnomePresentation.apply(e, catchingUp);
@@ -3413,10 +3703,12 @@ public class RunePartyPlugin extends Plugin
             {
                 // PATH/PENALTY_TILE/ITEM_TILE are the tile types with a real (coins/item) effect so
                 // far (see the COINS_CHANGED/ITEM_GRANTED cases below, which actually pay/grant it)
-                // -- START/EVENT_TILE are still no-ops, but this event fires for every type so this
-                // chat line is always accurate regardless. JAD_TILE has no coins/item effect of its
-                // own either, but does trigger a purely client-side cosmetic reaction below --
-                // spawning Jad's own model.
+                // -- START is still a no-op, but this event fires for every type so this chat line
+                // is always accurate regardless. JAD_TILE/WISE_OLD_MAN_TILE/ITEM_SHOP_TILE have no
+                // coins/item effect of their own either, but each triggers its own purely
+                // client-side cosmetic reaction below/elsewhere -- Jad's model spawning, or (for
+                // the latter two) their own dedicated encounter-opened event landing right behind
+                // this same one.
                 String tileEffectPlayer = Json.requiredStr(e.payload, type, "player");
                 String tileEffectType = Json.requiredStr(e.payload, type, "tileType");
                 if (!catchingUp)
@@ -3523,6 +3815,11 @@ public class RunePartyPlugin extends Plugin
             case Events.MINIGAME_TEAMS_ASSIGNED:
             case Events.HOT_POTATO_ASSIGNED:
             case Events.REPEAT_AFTER_ME_ROUND_STARTED:
+            case Events.PLAYER_TRANSFORMED:
+            case Events.BRUTUS_ROUND_STARTED:
+            case Events.BRUTUS_ARRIVAL_PENDING:
+            case Events.BRUTUS_DASH_MISSED:
+            case Events.BRUTUS_DASH_REPORTED:
             {
                 if (Events.MINIGAME_STARTED.equals(type))
                 {
@@ -3705,6 +4002,8 @@ public class RunePartyPlugin extends Plugin
         ceremonyPresentation.reset();
         goldenGnomePresentation.reset();
         jadPresentation.reset();
+        wiseOldManPresentation.reset();
+        itemShopPresentation.reset();
         chanceSpacePresentation.reset();
         coinPopups.clear();
         diceRollRsn = null; diceRollValue = 0; diceRollBonus = 0; diceRollStart = 0; diceRollUntil = 0;
@@ -3880,6 +4179,64 @@ public class RunePartyPlugin extends Plugin
     /** The local player's own running dance tally this round -- client-local only, nobody but the
      * local player ever sees this before the end-of-round Final Score recap. */
     public int getCrabRaveDanceCount() { return minigamePresentation.crabRave().getDanceCount(); }
+
+    public boolean isBrutusAttackActive() { return minigamePresentation.isKeyActive(BRUTUS_ATTACK_KEY); }
+    /** The rsn currently transformed into Brutus for this round -- null before PLAYER_TRANSFORMED
+     * lands. See overlays/PlayerTransformOverlay, the only consumer. */
+    public String getBrutusAttackBrutusRsn() { return minigamePresentation.brutusAttack().getBrutusRsn(); }
+    public int getBrutusAttackNpcId() { return minigamePresentation.brutusAttack().getNpcId(); }
+    public int getBrutusAttackIdleAnimationId() { return minigamePresentation.brutusAttack().getIdleAnimationId(); }
+    public int getBrutusAttackWalkAnimationId() { return minigamePresentation.brutusAttack().getWalkAnimationId(); }
+    public int getBrutusAttackRoundNumber() { return minigamePresentation.brutusAttack().getRoundNumber(); }
+    /** Lowercase rsns eliminated so far this mini-game -- see PlayerOverlay's own reuse of Hot
+     * Potato's skull indicator, the only consumer. */
+    public Set<String> getBrutusAttackEliminatedRsns() { return minigamePresentation.brutusAttack().getEliminatedRsns(); }
+    /** When the current round's own 10-second dash window closes -- 0 if no round is active yet.
+     * Drives AnnouncementOverlay's own dash countdown banner. */
+    public long getBrutusAttackDashEndsAt() { return minigamePresentation.brutusAttack().getDashEndsAt(); }
+    /** Whether the current round's own outcome (hit or miss) has already landed -- see that
+     * method's own doc. AnnouncementOverlay's own dash countdown checks this so the numeral
+     * disappears the instant the round resolves, rather than always counting down to 0. */
+    public boolean isBrutusAttackDashResolvedThisRound() { return minigamePresentation.brutusAttack().isDashResolvedThisRound(); }
+    /** Whether Brutus's own dash has landed for the current round, whether or not its outcome is
+     * known yet -- see that method's own doc. AnnouncementOverlay's own dash countdown checks this
+     * too, so the numeral disappears the instant Brutus physically enters the zone rather than
+     * continuing to count down through the server's own brief post-dash grace period. */
+    public boolean isBrutusAttackDashLandedThisRound() { return minigamePresentation.brutusAttack().isDashLandedThisRound(); }
+    /** The exact tiles that would eliminate a target standing on them for the CURRENT round's own
+     * dash -- empty unless isBrutusAttackDashLandedThisRound() is true. Same row/plane as Brutus's
+     * own reported landing tile, within BRUTUS_HITBOX_RADIUS_TILES of it in x -- the identical span
+     * isLocalPlayerHitByBrutusDash itself checks against, just enumerated here instead of tested
+     * against a single point, so TileOverlay can highlight exactly which tiles counted as the
+     * "crash zone" for that dash. */
+    public List<WorldPoint> getBrutusAttackCrashZoneTiles()
+    {
+        WorldPoint landed = minigamePresentation.brutusAttack().getDashLandedPosition();
+        if (landed == null) return Collections.emptyList();
+
+        List<WorldPoint> tiles = new ArrayList<>();
+        for (int dx = -BRUTUS_HITBOX_RADIUS_TILES; dx <= BRUTUS_HITBOX_RADIUS_TILES; dx++)
+        {
+            tiles.add(new WorldPoint(landed.getX() + dx, landed.getY(), landed.getPlane()));
+        }
+        return tiles;
+    }
+    /** When the current "HIT!"/"MISS!" flash should disappear -- 0 if none is armed. Drives
+     * AnnouncementOverlay's own renderBrutusAttackDashResult. */
+    public long getBrutusAttackDashResultBannerUntil() { return minigamePresentation.brutusAttack().getDashResultBannerUntil(); }
+    /** Whether the most recent dash resolved as a hit ("HIT!") or a miss ("MISS!") -- only
+     * meaningful while getBrutusAttackDashResultBannerUntil() hasn't passed yet. */
+    public boolean isBrutusAttackDashResultHit() { return minigamePresentation.brutusAttack().isDashResultHit(); }
+    /** Whether the local player is the one currently transformed into Brutus this round -- see
+     * AnnouncementOverlay's own role-aware "head to your zone"/"head to the target zone" gather
+     * message. */
+    public boolean isLocalPlayerAssignedBrutus()
+    {
+        String brutusRsn = getBrutusAttackBrutusRsn();
+        String self = getLocalRsn();
+        return brutusRsn != null && self != null && brutusRsn.equalsIgnoreCase(self);
+    }
+
     /** Whether the local player has personally stood on the course tile at {@code pathIndex} yet
      * this round -- see TileOverlay#renderRainbowRushTile, the only consumer: outline-only until
      * this flips true, filled solid after. */
@@ -3973,6 +4330,21 @@ public class RunePartyPlugin extends Plugin
     public String getLocalJaddyZoneColorHex()
     {
         return getJaddyZoneColorHex(lastKnownLocalPosition);
+    }
+
+    /** Whether the LOCAL player's own current position falls within BRUTUS_HITBOX_RADIUS_TILES of
+     * Brutus's own reported dash-landing tile (same row, same plane) -- see
+     * BrutusAttackPresentation#apply, the only caller, which fires confirmBrutusElimination the
+     * instant this returns true. Reads lastKnownLocalPosition (cached once per tick from
+     * onGameTick, the client thread) rather than calling Player#getWorldLocation() directly, same
+     * reasoning getLocalJaddyZoneColorHex's own doc gives -- this is called from handleEvent, which
+     * runs on EventSocket's own WebSocket callback thread, not the client thread. */
+    public boolean isLocalPlayerHitByBrutusDash(int brutusX, int brutusY, int brutusPlane)
+    {
+        WorldPoint pos = lastKnownLocalPosition;
+        if (pos == null) return false;
+        return pos.getY() == brutusY && pos.getPlane() == brutusPlane
+            && Math.abs(pos.getX() - brutusX) <= BRUTUS_HITBOX_RADIUS_TILES;
     }
 
     public String getTrueOrFalseQuestion() { return minigamePresentation.trueOrFalse().getQuestion(); }
@@ -4116,4 +4488,63 @@ public class RunePartyPlugin extends Plugin
     public String getJadOutcome() { return jadPresentation.getOutcome(); }
     public String getJadOutcomeRsn() { return jadPresentation.getOutcomeRsn(); }
     public long getJadOutcomeBannerUntil() { return jadPresentation.getOutcomeBannerUntil(); }
+
+    /** The rsn currently mid-Wise-Old-Man-encounter, or null -- see WiseOldManDialogueOverlay, the
+     * only reader beyond the getters below: only shows its own dialogue box when this equals the
+     * local player's own rsn. */
+    public String getWiseOldManEncounterRsn() { return wiseOldManPresentation.getEncounterRsn(); }
+    public long getWiseOldManAwakenedAt() { return wiseOldManPresentation.getAwakenedAt(); }
+    public long getWiseOldManRevealAt() { return wiseOldManPresentation.getRevealAt(); }
+    public String getWiseOldManStolenThief() { return wiseOldManPresentation.getStolenThief(); }
+    public String getWiseOldManStolenVictim() { return wiseOldManPresentation.getStolenVictim(); }
+    public String getWiseOldManStolenKind() { return wiseOldManPresentation.getStolenKind(); }
+    public Integer getWiseOldManStolenAmount() { return wiseOldManPresentation.getStolenAmount(); }
+    public long getWiseOldManStolenBannerUntil() { return wiseOldManPresentation.getStolenBannerUntil(); }
+
+    /** Submits the local player's own choice for their currently-open Wise Old Man encounter --
+     * action is "steal_coins"/"steal_golden_gnome"/"decline", target is required for either steal
+     * action (see ApiClient#wiseOldManChoose). Called only by WiseOldManDialogueOverlay's own
+     * click handling, fire-and-forget same as every other player-action method here -- the
+     * eventual WISE_OLD_MAN_DISMISSED that closes the encounter (or a 409 chat message if the
+     * server's own re-check rejects it) is what the dialogue box itself reacts to, not this call's
+     * own return. */
+    public void submitWiseOldManChoice(String action, String target)
+    {
+        String self = localRsn();
+        final String gid = gameId;
+        final String token = playerToken;
+        if (self == null || gid == null || token == null) return;
+
+        submitAction("Wise Old Man choice", () -> apiClient.wiseOldManChoose(gid, self, token, action, target),
+            e -> addChatMessage("Failed to submit your choice to the Wise Old Man: " + e.getMessage()));
+    }
+
+    /** The rsn currently mid-Item-Shop-encounter, or null -- see ItemShopDialogueOverlay, the only
+     * reader beyond the getters below: only shows its own dialogue box when this equals the local
+     * player's own rsn. */
+    public String getItemShopEncounterRsn() { return itemShopPresentation.getEncounterRsn(); }
+    public long getItemShopAwakenedAt() { return itemShopPresentation.getAwakenedAt(); }
+    public long getItemShopRevealAt() { return itemShopPresentation.getRevealAt(); }
+    public String getItemShopOutcome() { return itemShopPresentation.getOutcome(); }
+    public String getItemShopOutcomeRsn() { return itemShopPresentation.getOutcomeRsn(); }
+    public String getItemShopOutcomeItemDisplayName() { return itemShopPresentation.getOutcomeItemDisplayName(); }
+    public Integer getItemShopOutcomePrice() { return itemShopPresentation.getOutcomePrice(); }
+    public long getItemShopOutcomeBannerUntil() { return itemShopPresentation.getOutcomeBannerUntil(); }
+
+    /** Submits the local player's own choice for their currently-open Item Shop encounter --
+     * action is "buy_item"/"decline", itemKey is required for "buy_item" (see
+     * ApiClient#itemShopChoose). Called only by ItemShopDialogueOverlay's own click handling,
+     * fire-and-forget same as submitWiseOldManChoice's own doc describes -- the eventual
+     * ITEM_SHOP_DISMISSED that closes the encounter (or a 409 chat message if the server's own
+     * re-check rejects it) is what the dialogue box itself reacts to, not this call's own return. */
+    public void submitItemShopChoice(String action, String itemKey)
+    {
+        String self = localRsn();
+        final String gid = gameId;
+        final String token = playerToken;
+        if (self == null || gid == null || token == null) return;
+
+        submitAction("Item Shop choice", () -> apiClient.itemShopChoose(gid, self, token, action, itemKey),
+            e -> addChatMessage("Failed to submit your choice to the Item Shop: " + e.getMessage()));
+    }
 }

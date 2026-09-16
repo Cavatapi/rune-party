@@ -481,17 +481,20 @@ public class RunePartyMapOverlay extends Overlay
 
     /** Fixed reference list, one icon/color + short name per tile type -- just enough to place a
      * color or marker shape, not the fuller reward-number description maybeShowTooltip's own
-     * per-tile hover already gives. Non-modifier types come from the served catalog; the 2
-     * modifiers get their own bespoke marker shape/color below rather than a tile-outline square,
-     * but still pull their own short name from the same served catalog rather than hardcoding it a
-     * second time. */
+     * per-tile hover already gives. Non-modifier, non-mini-game-only types come from the served
+     * catalog; the 2 modifiers get their own bespoke marker shape/color below rather than a
+     * tile-outline square, but still pull their own short name from the same served catalog rather
+     * than hardcoding it a second time. isMinigameTile excludes every mini-game-only type (Arena,
+     * Turf Wars, Sandwich Rush, Hot Potato, Who's Your Jaddy, Fishing/Pond, Dance Dance RuneScape,
+     * Crab Rave, Brutus Attack, Repeat After Me) -- this map is a schematic of the standard course,
+     * not whatever arena happens to be swapped in for the mini-game currently playing. Same flag
+     * (and reasoning) CourseBuilder's own "Set Tile" submenu already filters on. */
     private List<LegendRow> buildLegendRows()
     {
         List<LegendRow> rows = new ArrayList<>();
         for (ApiClient.TileTypeOut t : plugin.getTileTypeCatalog().values())
         {
-            if (t.isModifier) continue;
-            if ("DDR_CENTER_TILE".equals(t.key)) continue; // see the tile-fill loop's own doc above
+            if (t.isModifier || t.isMinigameTile) continue;
             rows.add(new LegendRow(LegendShape.SQUARE, tileColor(t.key, null), t.displayName != null ? t.displayName : t.key));
         }
         rows.add(new LegendRow(LegendShape.TRIANGLE, GOLDEN_GNOME_MARKER, modifierName("GOLDEN_GNOME_TILE", "Golden Gnome")));

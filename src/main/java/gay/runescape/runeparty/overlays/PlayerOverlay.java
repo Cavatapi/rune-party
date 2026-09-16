@@ -38,7 +38,10 @@ import net.runelite.client.util.Text;
  * start. Who's Your Jaddy? gets the same treatment, just live rather than assigned once -- a
  * player's own outline/token switches the instant their real WorldLocation lands on a JADDY_TILE
  * zone, and switches right back the instant they step off it, since picking a side there is just
- * standing on it (see RunePartyPlugin#getJaddyZoneColor). */
+ * standing on it (see RunePartyPlugin#getJaddyZoneColor). While Brutus Attack is active, every
+ * still-surviving target's own token swaps to a larger bullseye shape instead (still their own
+ * seat color, see drawBrutusAttackTargetToken) -- reverts to the plain token the instant they're
+ * eliminated. */
 public class PlayerOverlay extends Overlay
 {
     private static final int OUTLINE_WIDTH = 2;
@@ -79,6 +82,14 @@ public class PlayerOverlay extends Overlay
     // popup like the coin/Golden Gnome ones above.
     private static final int HOT_POTATO_SKULL_ICON_SIZE = 18;
     private static final int HOT_POTATO_SKULL_ICON_CLEARANCE = 12; // gap above the token's own top edge
+
+    // Brutus Attack's own replacement for the plain token -- a bullseye, noticeably larger than
+    // TOKEN_RADIUS, so a still-in-play target reads unmistakably differently from ordinary seated
+    // play. See drawBrutusAttackTargetToken.
+    private static final int BRUTUS_TARGET_TOKEN_OUTER_RADIUS = 16;
+    private static final int BRUTUS_TARGET_TOKEN_MIDDLE_RADIUS = 10;
+    private static final int BRUTUS_TARGET_TOKEN_INNER_RADIUS = 4;
+    private static final Stroke BRUTUS_TARGET_TOKEN_RING_STROKE = new BasicStroke(2f);
 
     private final Client client;
     private final RunePartyConfig config;
@@ -149,7 +160,22 @@ public class PlayerOverlay extends Overlay
             // mini-game is active, which onTurn's own check above already rules out.
             boolean holdingHotPotato = phase == GamePhase.ACTIVE && plugin.isHotPotatoActive() && plugin.isMinigamePlayable()
                 && rsn.equalsIgnoreCase(plugin.getHotPotatoHolder());
-            drawToken(g, p, c, onTurn, holdingHotPotato);
+
+            // Every still-surviving target (not Brutus himself, not someone already eliminated)
+            // gets the bullseye marker instead of the plain token for as long as the mini-game's
+            // own hunt is actually live -- an eliminated target just reverts to the plain token,
+            // no separate marker needed on top of that.
+            boolean isBrutusAttackTarget = phase == GamePhase.ACTIVE && plugin.isBrutusAttackActive()
+                && !rsn.equalsIgnoreCase(plugin.getBrutusAttackBrutusRsn())
+                && !plugin.getBrutusAttackEliminatedRsns().contains(rsn.toLowerCase(Locale.ROOT));
+            if (isBrutusAttackTarget)
+            {
+                drawBrutusAttackTargetToken(g, p, c);
+            }
+            else
+            {
+                drawToken(g, p, c, onTurn, holdingHotPotato);
+            }
 
             // Mutually exclusive with holdingHotPotato by construction -- once eliminated, a
             // player can never hold the potato again (see app.py's hot_potato_pass/hot_potato.py's
@@ -228,6 +254,31 @@ public class PlayerOverlay extends Overlay
             g.setColor(Color.BLACK);
             g.drawOval(cx - radius, cy - radius, radius * 2, radius * 2);
         }
+    }
+
+    /** Brutus Attack's own replacement for the plain token -- a bullseye (two concentric ring
+     * outlines plus a filled center dot), all in {@code color} (the same seat/team color the plain
+     * token would have used), noticeably larger than TOKEN_RADIUS so it's unmistakable at a glance
+     * who's still in play. Shown for as long as this player is a still-surviving target (see
+     * render()'s own isBrutusAttackTarget check) -- reverts to the plain token the instant they're
+     * eliminated, no separate marker needed on top of that. */
+    private void drawBrutusAttackTargetToken(Graphics2D g, Player p, Color color)
+    {
+        int yOffset = p.getLogicalHeight() + BRUTUS_TARGET_TOKEN_OUTER_RADIUS + TOKEN_HEAD_CLEARANCE;
+        Point loc = p.getCanvasTextLocation(g, "", yOffset);
+        if (loc == null) return;
+
+        int cx = loc.getX();
+        int cy = loc.getY();
+
+        g.setColor(color);
+        g.setStroke(BRUTUS_TARGET_TOKEN_RING_STROKE);
+        g.drawOval(cx - BRUTUS_TARGET_TOKEN_OUTER_RADIUS, cy - BRUTUS_TARGET_TOKEN_OUTER_RADIUS,
+            BRUTUS_TARGET_TOKEN_OUTER_RADIUS * 2, BRUTUS_TARGET_TOKEN_OUTER_RADIUS * 2);
+        g.drawOval(cx - BRUTUS_TARGET_TOKEN_MIDDLE_RADIUS, cy - BRUTUS_TARGET_TOKEN_MIDDLE_RADIUS,
+            BRUTUS_TARGET_TOKEN_MIDDLE_RADIUS * 2, BRUTUS_TARGET_TOKEN_MIDDLE_RADIUS * 2);
+        g.fillOval(cx - BRUTUS_TARGET_TOKEN_INNER_RADIUS, cy - BRUTUS_TARGET_TOKEN_INNER_RADIUS,
+            BRUTUS_TARGET_TOKEN_INNER_RADIUS * 2, BRUTUS_TARGET_TOKEN_INNER_RADIUS * 2);
     }
 
     private static Color lerpColor(Color a, Color b, float t)

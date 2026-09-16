@@ -24,7 +24,7 @@ public class ClickClickClickMinigame implements Minigame
     @Override
     public String getDisplayName()
     {
-        return "Click, Click, Click";
+        return "Click! Click! Click!";
     }
 
     /** A simple concentric-ring "target" icon -- purely programmatic, same "no bundled raster

@@ -179,65 +179,60 @@ public final class CoursePreset
         }
     }
 
-    /** Swaps the tile at {@code index} to {@code tileType} in place, keeping its dx/dy/color/
-     * nextIndices -- the same "list position becomes pathIndex, only the type changes" idiom
-     * {@link #buildStandardLoop} uses for every one of its non-PATH tiles. */
-    private static void swapType(List<RelativeTile> tiles, int index, String tileType)
-    {
-        if (index >= tiles.size()) return;
-        RelativeTile t = tiles.get(index);
-        tiles.set(index, new RelativeTile(t.dx, t.dy, tileType, t.color, t.nextIndices));
-    }
-
     /**
-     * A generated placeholder loop (a plain rectangular ring of PATH tiles, START at index 0) so
-     * there's at least one non-empty, testable built-in course out of the box. Real courses are
-     * expected to be host-authored via sequential freehand placement, then saved as custom slots
-     * through {@link #fromTiles}. Every tile here gets its own explicit single-edge nextIndices
-     * baked in below (the perimeter walk's own "+1, wrapping at the end" order) -- there's no
-     * implicit default to lean on. Also exercises a Golden Gnome modifier end-to-end (see
-     * RelativeTile#decorative) two steps out from START, so it's reachable by almost any first
-     * roll, plus a spread of every other course tile type (ITEM, JAD, PENALTY, CHANCE)
-     * swapped in around the loop -- roughly Fally Park's own PATH-heavy proportions, just scaled
-     * down to this course's 36 real tiles, so the default course isn't just a bare ring of PATH.
+     * Captured from a real, host-built course (12x5 = 30 real tiles, replacing the previous
+     * generated 12x8 rectangular-ring placeholder), same "captured verbatim" approach
+     * HardcodedCourse.buildFallyParkCourse's own doc describes. Reconstructed from that course's
+     * own TILES_MARKED/TILES_UNMARKED event log (id 4127-4162, game 20260916-053836-1C1D) -- a few
+     * tiles were placed, removed, and replaced with something else while it was being built (the
+     * original JAD_TILE at what's now index 3 became an ITEM_TILE; the original START at what's
+     * now index 28 became an ITEM_TILE once index 0 was chosen as the real START instead; the PATH
+     * originally at what's now index 16 became a WISE_OLD_MAN_TILE) -- this reflects the FINAL
+     * state only, replays already folded in.
+     * <p>
+     * The connect events that would carry each tile's own real nextIndices weren't captured
+     * alongside this -- per the user's own explicit call, this bakes in a plain "+1, wrapping at
+     * the end" edge for every tile instead (same idiom the previous generated loop used), not
+     * whatever bespoke connections (if any) the original course actually had.
      */
     public static CoursePreset buildStandardLoop()
     {
-        int width = 12, height = 8;
-        int startX = -(width / 2), startY = -(height / 2);
-        int endX = startX + width - 1, endY = startY + height - 1;
-
         List<RelativeTile> tiles = new ArrayList<>();
-        // Walk the rectangle's perimeter clockwise starting from the top-left corner, so list
-        // order traces one continuous loop rather than four disconnected edges.
-        for (int x = startX; x <= endX; x++) tiles.add(new RelativeTile(x, startY, "PATH", null));
-        for (int y = startY + 1; y <= endY; y++) tiles.add(new RelativeTile(endX, y, "PATH", null));
-        for (int x = endX - 1; x >= startX; x--) tiles.add(new RelativeTile(x, endY, "PATH", null));
-        for (int y = endY - 1; y > startY; y--) tiles.add(new RelativeTile(startX, y, "PATH", null));
+        tiles.add(new RelativeTile(-5, -2, "START", null));
+        tiles.add(new RelativeTile(-4, -2, "PATH", null));
+        tiles.add(new RelativeTile(-3, -2, "PATH", null));
+        tiles.add(new RelativeTile(-2, -2, "ITEM_TILE", null));
+        tiles.add(new RelativeTile(-1, -2, "PENALTY_TILE", null));
+        tiles.add(new RelativeTile(0, -2, "PATH", null));
+        tiles.add(new RelativeTile(1, -2, "PENALTY_TILE", null));
+        tiles.add(new RelativeTile(2, -2, "PATH", null));
+        tiles.add(new RelativeTile(3, -2, "ITEM_TILE", null));
+        tiles.add(new RelativeTile(4, -2, "CHANCE_TILE", null));
+        tiles.add(new RelativeTile(5, -2, "PATH", null));
+        tiles.add(new RelativeTile(6, -2, "PENALTY_TILE", null));
+        tiles.add(new RelativeTile(6, -1, "CHANCE_TILE", null));
+        tiles.add(new RelativeTile(6, 0, "PATH", null));
+        tiles.add(new RelativeTile(6, 1, "PATH", null));
+        tiles.add(new RelativeTile(6, 2, "ITEM_TILE", null));
+        tiles.add(new RelativeTile(5, 2, "WISE_OLD_MAN_TILE", null));
+        tiles.add(new RelativeTile(4, 2, "PATH", null));
+        tiles.add(new RelativeTile(1, 2, "JAD_TILE", null));
+        tiles.add(new RelativeTile(2, 2, "ITEM_TILE", null));
+        tiles.add(new RelativeTile(3, 2, "PENALTY_TILE", null));
+        tiles.add(new RelativeTile(0, 2, "PENALTY_TILE", null));
+        tiles.add(new RelativeTile(-1, 2, "PENALTY_TILE", null));
+        tiles.add(new RelativeTile(-2, 2, "PATH", null));
+        tiles.add(new RelativeTile(-3, 2, "CHANCE_TILE", null));
+        tiles.add(new RelativeTile(-4, 2, "PATH", null));
+        tiles.add(new RelativeTile(-5, 2, "PATH", null));
+        tiles.add(new RelativeTile(-5, 1, "ITEM_SHOP_TILE", null));
+        tiles.add(new RelativeTile(-5, 0, "ITEM_TILE", null));
+        tiles.add(new RelativeTile(-5, -1, "PENALTY_TILE", null));
 
-        if (!tiles.isEmpty())
-        {
-            RelativeTile first = tiles.get(0);
-            tiles.set(0, new RelativeTile(first.dx, first.dy, "START", null, first.nextIndices));
-        }
-
-        // Swapped in place, same idiom as index 0 becoming START above -- spread across all four
-        // sides of the perimeter rather than clustered on one, so no single stretch of the loop is
-        // all-PATH.
-        swapType(tiles, 4, "ITEM_TILE");
-        swapType(tiles, 7, "PENALTY_TILE");
-        swapType(tiles, 10, "JAD_TILE");
-        swapType(tiles, 15, "CHANCE_TILE");
-        swapType(tiles, 24, "PENALTY_TILE");
-        swapType(tiles, 27, "ITEM_TILE");
-        swapType(tiles, 29, "CHANCE_TILE");
-        swapType(tiles, 32, "PENALTY_TILE");
-        swapType(tiles, 34, "CHANCE_TILE");
-
-        // Bake in every tile's own explicit "+1, wrapping at the end" edge -- must happen after
-        // every tileType swap above and before the decorative Golden Gnome tile is appended below,
-        // since courseLen has to be exactly the real course's own tile count, not
-        // real-tiles-plus-decorative (a decorative tile never gets a pathIndex of its own).
+        // Bake in every tile's own explicit "+1, wrapping at the end" edge -- must happen before
+        // the decorative Golden Gnome tile is appended below, since courseLen has to be exactly
+        // the real course's own tile count, not real-tiles-plus-decorative (a decorative tile
+        // never gets a pathIndex of its own).
         int courseLen = tiles.size();
         for (int i = 0; i < tiles.size(); i++)
         {
@@ -245,11 +240,11 @@ public final class CoursePreset
             tiles.set(i, new RelativeTile(t.dx, t.dy, t.tileType, t.color, (i + 1) % courseLen));
         }
 
-        // Decorative Golden Gnome modifier, stacked on the PATH tile two steps out from START (see
+        // Decorative Golden Gnome modifier, stacked on the same tile index 2 (a PATH) sits on --
+        // same "two steps out from START" placement the previous generated loop used (see
         // RelativeTile#decorative's own doc for why this has to be appended *after* the real path
         // rather than spliced in at its logical dx/dy).
-        int goldenGnomeDx = startX + 2, goldenGnomeDy = startY;
-        tiles.add(new RelativeTile(goldenGnomeDx, goldenGnomeDy, "GOLDEN_GNOME_TILE", null, true));
+        tiles.add(new RelativeTile(-3, -2, "GOLDEN_GNOME_TILE", null, true));
 
         return new CoursePreset("Standard Loop", tiles);
     }

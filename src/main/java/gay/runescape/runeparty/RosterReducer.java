@@ -298,6 +298,7 @@ public class RosterReducer
                 break;
             }
             case Events.ITEM_GRANTED:
+            case Events.ITEM_SHOP_PURCHASED:
             {
                 String playerRaw = Json.requiredStr(e.payload, type, "player");
                 String itemKey = Json.requiredStr(e.payload, type, "itemKey");
