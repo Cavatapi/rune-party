@@ -26,6 +26,7 @@ import gay.runescape.runeparty.minigames.DanceDanceRuneScapePresentation;
 import com.google.gson.Gson;
 import com.google.inject.Provides;
 import gay.runescape.runeparty.items.Items;
+import gay.runescape.runeparty.models.KingBooModel;
 import gay.runescape.runeparty.models.HotPotatoExplosionModel;
 import gay.runescape.runeparty.overlays.AnnouncementOverlay;
 import gay.runescape.runeparty.overlays.ClickClickClickOverlay;
@@ -71,6 +72,7 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
+import javax.swing.JOptionPane;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.Menu;
@@ -812,6 +814,10 @@ public class RunePartyPlugin extends Plugin
     // suppresses every banner/announcement while this is true, see that class's own doc).
     private volatile boolean mapShowing = false;
 
+    // Temporary King Boo visual model.
+    // Gameplay/server behavior will be handled separately.
+    private KingBooModel kingBooModel;
+
     // Server-wide, not game-scoped -- fetched once at startup (see loadTileTypeCatalog) rather
     // than per-game like the roster, since the tiles/ registry it mirrors never changes at
     // runtime. Empty until the fetch completes (or forever, if it fails) -- every consumer
@@ -1192,6 +1198,9 @@ public class RunePartyPlugin extends Plugin
         // plain field spawn()ed directly from the HOT_POTATO_EXPLODED handler.
         hotPotatoExplosionModel = new HotPotatoExplosionModel(client);
 
+        //TEMPORARY
+        kingBooModel = new KingBooModel(client);
+
         turfWarsScoreOverlay = new TurfWarsScoreOverlay(this);
         overlayManager.add(turfWarsScoreOverlay);
 
@@ -1248,6 +1257,7 @@ public class RunePartyPlugin extends Plugin
         if (clickClickClickOverlay != null) overlayManager.remove(clickClickClickOverlay);
         if (hotPotatoOverlay != null) overlayManager.remove(hotPotatoOverlay);
         if (hotPotatoExplosionModel != null) hotPotatoExplosionModel.clear();
+        if (kingBooModel != null) kingBooModel.clear();
         if (turfWarsScoreOverlay != null) overlayManager.remove(turfWarsScoreOverlay);
         if (sandwichRushHudOverlay != null) overlayManager.remove(sandwichRushHudOverlay);
         if (danceDanceRuneScapeOverlay != null) overlayManager.remove(danceDanceRuneScapeOverlay);
@@ -1957,6 +1967,14 @@ public class RunePartyPlugin extends Plugin
             return;
         }
 
+        // TEMPORARY: King Boo interaction.
+        // Eligibility checks will be added once the menu itself is working.
+        if (kingBooModel != null && kingBooModel.isUnderMouse(canvasPoint))
+        {
+            addKingBooMenuEntries();
+            return;
+        }
+
         WorldPoint goldenGnomePoint = hoveredPurchasableGoldenGnomePoint(canvasPoint);
         if (goldenGnomePoint != null)
         {
@@ -2101,7 +2119,19 @@ public class RunePartyPlugin extends Plugin
             sessionManager.attemptSessionResume();
         }
 
+        // TEMPORARY: Spawn King Boo whenever his test tile is loaded.
+        if (kingBooModel != null && !kingBooModel.isSpawned())
+        {
+            kingBooModel.spawn(new WorldPoint(3003, 3370, 0));
+        }
+
         if (phase != GamePhase.ACTIVE) return;
+
+        // rest of existing method...
+
+        // rest of existing method...
+
+// Refreshed unconditionally...
 
         // Refreshed unconditionally, ahead of the early returns below -- isLocalPlayerReadyToRoll
         // needs this cache kept current every tick regardless of pendingRoll/arrivalSubmitted/etc,
@@ -2262,6 +2292,99 @@ public class RunePartyPlugin extends Plugin
 
         arrivalSubmitted = true;
         confirmArrival(pos);
+    }
+
+    private void addKingBooMenuEntries()
+    {
+        client.createMenuEntry(-1)
+                .setOption("Steal 15 Coins")
+                .setTarget("<col=ffff00>King Boo</col>")
+                .setType(MenuAction.RUNELITE)
+                .onClick(me -> handleKingBooStealCoins());
+
+        client.createMenuEntry(-1)
+                .setOption("Steal Golden Gnome (50 Coins)")
+                .setTarget("<col=ffff00>King Boo</col>")
+                .setType(MenuAction.RUNELITE)
+                .onClick(me -> handleKingBooStealGnome());
+    }
+
+    private void handleKingBooStealCoins()
+    {
+        String self = localRsn();
+        if (self == null)
+        {
+            return;
+        }
+
+        List<RosterReducer.RosterEntry> targets = rosterReducer.seatedPlayers();
+
+        String[] playerNames = targets.stream()
+                .filter(player -> !player.rsn.equalsIgnoreCase(self))
+                .map(player -> player.rsn)
+                .toArray(String[]::new);
+
+        if (playerNames.length == 0)
+        {
+            client.addChatMessage(
+                    ChatMessageType.GAMEMESSAGE,
+                    "",
+                    "King Boo: There are no other players to steal from.",
+                    null
+            );
+            return;
+        }
+
+        SwingUtilities.invokeLater(() ->
+        {
+            Object selected = JOptionPane.showInputDialog(
+                    null,
+                    "Choose a player to steal 15 coins from:",
+                    "King Boo",
+                    JOptionPane.PLAIN_MESSAGE,
+                    null,
+                    playerNames,
+                    playerNames[0]
+            );
+
+            if (selected == null)
+            {
+                return;
+            }
+
+            String targetRsn = selected.toString();
+
+            clientThread.invoke(() ->
+                    client.addChatMessage(
+                            ChatMessageType.GAMEMESSAGE,
+                            "",
+                            "King Boo: Selected " + targetRsn + " for a 15 coin steal.",
+                            null
+                    )
+            );
+        });
+    }
+
+    private void showKingBooCoinStealResult(String targetRsn, int amountStolen)
+    {
+        client.addChatMessage(
+                ChatMessageType.GAMEMESSAGE,
+                "",
+                "King Boo stole " + amountStolen + " coin"
+                        + (amountStolen == 1 ? "" : "s")
+                        + " from " + targetRsn + "!",
+                null
+        );
+    }
+
+    private void handleKingBooStealGnome()
+    {
+        client.addChatMessage(
+                ChatMessageType.GAMEMESSAGE,
+                "",
+                "King Boo: Steal Golden Gnome selected.",
+                null
+        );
     }
 
     private void checkGatheringAtStart()
