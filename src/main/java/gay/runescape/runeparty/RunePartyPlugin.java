@@ -52,6 +52,7 @@ import gay.runescape.runeparty.overlays.PlayerOverlay;
 import gay.runescape.runeparty.overlays.PlayerTransformOverlay;
 import gay.runescape.runeparty.overlays.RunePartyMapOverlay;
 import gay.runescape.runeparty.overlays.SandwichRushHudOverlay;
+import gay.runescape.runeparty.overlays.MageArenaOverlay;
 import gay.runescape.runeparty.overlays.StatsOverlay;
 import gay.runescape.runeparty.overlays.TileOverlay;
 import gay.runescape.runeparty.overlays.TurfWarsScoreOverlay;
@@ -118,6 +119,7 @@ import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.ui.overlay.outline.ModelOutlineRenderer;
 import net.runelite.client.ui.overlay.tooltip.TooltipManager;
 import net.runelite.client.util.Text;
+import net.runelite.api.KeyCode;
 import okhttp3.OkHttpClient;
 import lombok.extern.slf4j.Slf4j;
 
@@ -478,6 +480,14 @@ public class RunePartyPlugin extends Plugin
      * (winner-take-all, not ranked). Arrival-gated like Arena/Hot Potato/Rune Match/etc -- see
      * ARRIVAL_GATHER_KEYS below. */
     public static final String BALLOON_POP_KEY = "balloon-pop";
+
+    /**
+     * Client-side key for the Mage Arena mini-game.
+     *
+     * One player acts as the Mage while the remaining players dodge
+     * targeted spells inside a 6x5 arena.
+     */
+    public static final String MAGE_ARENA_KEY = "mage-arena";
 
     /** Backup ceiling on a Rune Match round if this client hasn't personally finished by then --
      * not a normal win condition, same "failsafe, not the real end condition" shape
@@ -1105,6 +1115,7 @@ public class RunePartyPlugin extends Plugin
     private DanceDanceRuneScapeOverlay danceDanceRuneScapeOverlay;
     private DanceDanceRuneScapeHudOverlay danceDanceRuneScapeHudOverlay;
     private HardcodedCourseLauncherOverlay hardcodedCourseLauncherOverlay;
+    private MageArenaOverlay mageArenaOverlay;
     private RosterReducer rosterReducer;
     public ApiClient apiClient; // public: presenters in the minigames subpackage issue their own requests
     public EventSocket eventSocket;
@@ -1553,6 +1564,10 @@ public class RunePartyPlugin extends Plugin
         clickClickClickOverlay = new ClickClickClickOverlay(this);
         overlayManager.add(clickClickClickOverlay);
 
+        mageArenaOverlay = new MageArenaOverlay(client);
+        mageArenaOverlay.setPresentation(minigamePresentation.mageArena());
+        overlayManager.add(mageArenaOverlay);
+
         hotPotatoOverlay = new HotPotatoOverlay(this);
         overlayManager.add(hotPotatoOverlay);
 
@@ -1621,6 +1636,7 @@ public class RunePartyPlugin extends Plugin
         if (fishingCatchOverlay != null) overlayManager.remove(fishingCatchOverlay);
         if (runeMatchOverlay != null) overlayManager.remove(runeMatchOverlay);
         if (clickClickClickOverlay != null) overlayManager.remove(clickClickClickOverlay);
+        if (mageArenaOverlay != null) overlayManager.remove(mageArenaOverlay);
         if (hotPotatoOverlay != null) overlayManager.remove(hotPotatoOverlay);
         if (hotPotatoExplosionModel != null) hotPotatoExplosionModel.clear();
         if (turfWarsScoreOverlay != null) overlayManager.remove(turfWarsScoreOverlay);
@@ -2182,6 +2198,29 @@ public class RunePartyPlugin extends Plugin
             .onClick(me -> placeCoinTrapAt(point));
     }
 
+    /**
+     * Adds a Mage Arena spell-cast action to an arena tile.
+     *
+     * This replaces the normal default "Walk here" left-click while the
+     * cursor is over one of Mage Arena's 30 tiles. Because this is a
+     * RUNELITE menu action, clicking casts the spell without causing the
+     * local player to walk toward the targeted tile.
+     */
+    private void addMageArenaMenuEntry(WorldPoint point)
+    {
+        if (point == null)
+        {
+            return;
+        }
+
+        client.createMenuEntry(-1)
+                .setOption("<col=FF8C00>Cast Spell</col>")
+                .setTarget("")
+                .setType(MenuAction.RUNELITE)
+                .onClick(me ->
+                        minigamePresentation.mageArena().castSpell(point));
+    }
+
     /** Same "Walk here" -> custom RUNELITE entry idiom as addPresetMenuEntries/
      * addItemPlacementMenuEntries, but here the whole point is that the player never actually
      * walks: appending this entry after "Walk here" makes it the new default left-click action
@@ -2253,23 +2292,108 @@ public class RunePartyPlugin extends Plugin
     @Subscribe
     public void onMenuOptionClicked(MenuOptionClicked event)
     {
-        if (phase != GamePhase.ACTIVE || !isBalloonPopActive() || !isMinigamePlayable()) return;
-        if (event.getMenuAction() != MenuAction.WALK) return;
+        // ---------------------------------------------------------------------
+        // TEMPORARY MAGE ARENA PROTOTYPE
+        //
+        // Shift + left click on an arena tile casts a spell.
+        // Normal left click remains normal walking.
+        // ---------------------------------------------------------------------
+        if (event.getMenuAction() == MenuAction.WALK &&
+                client.isKeyPressed(KeyCode.KC_SHIFT) &&
+                minigamePresentation != null &&
+                minigamePresentation.mageArena().isArenaBuilt())
+        {
+            WorldView worldView =
+                    client.getWorldView(event.getMenuEntry().getWorldViewId());
+
+            if (worldView != null)
+            {
+                Tile selectedTile = worldView.getSelectedSceneTile();
+
+                if (selectedTile != null)
+                {
+                    WorldPoint clicked =
+                            WorldPoint.fromLocalInstance(
+                                    client,
+                                    selectedTile.getLocalLocation()
+                            );
+
+                    if (clicked != null &&
+                            minigamePresentation.mageArena().isArenaTile(clicked))
+                    {
+                        // Prevent walking ONLY while Shift is held.
+                        event.consume();
+
+                        // Cast instead.
+                        minigamePresentation.mageArena().castSpell(clicked);
+
+                        return;
+                    }
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // EXISTING BALLOON POP LOGIC
+        // ---------------------------------------------------------------------
+        if (phase != GamePhase.ACTIVE ||
+                !isBalloonPopActive() ||
+                !isMinigamePlayable())
+        {
+            return;
+        }
+
+        if (event.getMenuAction() != MenuAction.WALK)
+        {
+            return;
+        }
 
         Player selfPlayer = client.getLocalPlayer();
-        if (selfPlayer == null) return;
+
+        if (selfPlayer == null)
+        {
+            return;
+        }
+
         WorldPoint selfPos = selfPlayer.getWorldLocation();
-        if (selfPos == null) return;
 
-        WorldView worldView = client.getWorldView(event.getMenuEntry().getWorldViewId());
-        if (worldView == null) return;
+        if (selfPos == null)
+        {
+            return;
+        }
+
+        WorldView worldView =
+                client.getWorldView(event.getMenuEntry().getWorldViewId());
+
+        if (worldView == null)
+        {
+            return;
+        }
+
         Tile selectedTile = worldView.getSelectedSceneTile();
-        if (selectedTile == null) return;
-        WorldPoint clicked = WorldPoint.fromLocalInstance(client, selectedTile.getLocalLocation());
 
-        log.debug("[balloon-pop-click-diagnostic] clickedPoint={} selfPos={} matches={}", clicked, selfPos, clicked.equals(selfPos));
+        if (selectedTile == null)
+        {
+            return;
+        }
 
-        if (!clicked.equals(selfPos)) return;
+        WorldPoint clicked =
+                WorldPoint.fromLocalInstance(
+                        client,
+                        selectedTile.getLocalLocation()
+                );
+
+        log.debug(
+                "[balloon-pop-click-diagnostic] clickedPoint={} selfPos={} matches={}",
+                clicked,
+                selfPos,
+                clicked.equals(selfPos)
+        );
+
+        if (!clicked.equals(selfPos))
+        {
+            return;
+        }
 
         registerBalloonPopClick();
     }
@@ -2329,6 +2453,39 @@ public class RunePartyPlugin extends Plugin
         submitAction("Report Balloon Pop pop",
             () -> apiClient.reportBalloonPopPop(gid, self, token),
             e -> addChatMessage("Failed to report your balloon popping: " + e.getMessage()));
+    }
+
+    /**
+     * TEMPORARY Mage Arena prototype helper.
+     *
+     * Builds the local 6x5 arena near the player's current position.
+     * This will be removed once Mage Arena receives its arena from
+     * Rune Party's real board-swap system.
+     */
+    public void buildMageArenaPrototype()
+    {
+        Player self = client.getLocalPlayer();
+
+        if (self == null)
+        {
+            return;
+        }
+
+        WorldPoint playerPoint = self.getWorldLocation();
+
+        if (playerPoint == null)
+        {
+            return;
+        }
+
+        // Put the south-west corner two tiles east of the player.
+        WorldPoint anchor = new WorldPoint(
+                playerPoint.getX() + 2,
+                playerPoint.getY(),
+                playerPoint.getPlane()
+        );
+
+        minigamePresentation.mageArena().buildPrototypeArena(anchor);
     }
 
     private static final String GOLDEN_GNOME_PURCHASE_OPTION = "<col=00FF00>Purchase Golden Gnome</col>";
@@ -2711,6 +2868,12 @@ public class RunePartyPlugin extends Plugin
         standingOnTrackedPositionCached = self != null && selfPlayer != null && isStandingOnTrackedPosition(selfPlayer, self);
         lastKnownLocalPosition = selfPlayer != null ? selfPlayer.getWorldLocation() : null;
 
+        // TEMPORARY: Build the Mage Arena prototype once for visual testing.
+        if (!minigamePresentation.mageArena().isArenaBuilt())
+        {
+            buildMageArenaPrototype();
+        }
+
         // Runs independently of the turn engine below -- a Coin Rush round has no "whose turn is
         // it" at all, every seated player can be racing for a spawn at once, so this can't share
         // the pendingRoll-gated checks the rest of onGameTick uses.
@@ -2932,38 +3095,49 @@ public class RunePartyPlugin extends Plugin
     // -------------------------------------------------------------------------
 
     @Subscribe
-    public void onMenuEntryAdded(MenuEntryAdded event)
-    {
-        if ("Follow".equals(event.getOption()))
-        {
+    public void onMenuEntryAdded(MenuEntryAdded event) {
+        if ("Follow".equals(event.getOption())) {
             addToGameMenuEntry(event);
             addItemTargetMenuEntry(event);
             return;
         }
 
         if (!"Walk here".equals(event.getOption())) return;
-        if (phase == GamePhase.LOBBY && isHost() && courseBuilder.isCoursePlacementMode())
-        {
+        if (phase == GamePhase.LOBBY && isHost() && courseBuilder.isCoursePlacementMode()) {
             courseBuilder.addPresetMenuEntries();
             return;
         }
-        if (phase == GamePhase.LOBBY && isHost() && courseBuilder.isCustomCourseBuildMode())
-        {
+        if (phase == GamePhase.LOBBY && isHost() && courseBuilder.isCustomCourseBuildMode()) {
             courseBuilder.addCustomCourseBuildMenuEntries();
             return;
         }
-        if (phase == GamePhase.LOBBY && isHost() && courseBuilder.isMinigameSpawnPlacementMode())
-        {
+        if (phase == GamePhase.LOBBY && isHost() && courseBuilder.isMinigameSpawnPlacementMode()) {
             courseBuilder.addMinigameSpawnMenuEntries();
             return;
         }
-        if (phase == GamePhase.ACTIVE && itemPlacementKey != null)
-        {
+        if (phase == GamePhase.ACTIVE && itemPlacementKey != null) {
             addItemPlacementMenuEntries();
             return;
         }
-        if (phase == GamePhase.ACTIVE && isClickClickClickActive() && isMinigamePlayable())
-        {
+
+        // TEMPORARY Mage Arena prototype.
+        // Adding this RUNELITE entry after "Walk here" makes Cast Spell
+        // the normal left-click action while the cursor is over the arena.
+        if (phase == GamePhase.ACTIVE &&
+                minigamePresentation.mageArena().isArenaBuilt()) {
+            Tile tile = client.getTopLevelWorldView().getSelectedSceneTile();
+
+            if (tile != null) {
+                WorldPoint point = tile.getWorldLocation();
+
+                if (minigamePresentation.mageArena().isArenaTile(point)) {
+                    addMageArenaMenuEntry(point);
+                    return;
+                }
+            }
+        }
+
+        if (phase == GamePhase.ACTIVE && isClickClickClickActive() && isMinigamePlayable()) {
             addClickClickClickMenuEntry();
         }
     }
