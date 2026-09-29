@@ -2235,11 +2235,12 @@ public class RunePartyPlugin extends Plugin
         }
 
         client.createMenuEntry(-1)
-                .setOption("<col=FF8C00>Cast Spell</col>")
+                .setOption(minigamePresentation.mageArena().getRoundStartAt() == 0
+                        ? "<col=FF8C00>Start Mage Arena</col>" : "<col=FF8C00>Cast Spell</col>")
                 .setTarget("")
                 .setType(MenuAction.RUNELITE)
                 .onClick(me ->
-                        minigamePresentation.mageArena().castSpell(point));
+                        castMageArenaSpell(point));
     }
 
     /** Same "Walk here" -> custom RUNELITE entry idiom as addPresetMenuEntries/
@@ -2347,7 +2348,7 @@ public class RunePartyPlugin extends Plugin
                         event.consume();
 
                         // Cast instead.
-                        minigamePresentation.mageArena().castSpell(clicked);
+                        castMageArenaSpell(clicked);
 
                         return;
                     }
@@ -2575,6 +2576,19 @@ public class RunePartyPlugin extends Plugin
             }
             mageArenaSpellModel.update(minigamePresentation.mageArena().isArenaBuilt());
             minigamePresentation.mageArena().updateSpells();
+            if (client.getGameState() == net.runelite.api.GameState.LOGGED_IN)
+            {
+                // Offline prototype only: observe loaded players without any network traffic.
+                // The multiplayer integration must check only the local participant and report
+                // its own elimination against a server-broadcast spell (see docs/MAGE_ARENA_NETWORK.md).
+                for (Player player : client.getPlayers())
+                {
+                    if (player != null)
+                    {
+                        minigamePresentation.mageArena().checkPlayerHit(player.getName(), player.getWorldLocation());
+                    }
+                }
+            }
         }
         if (client.isMenuOpen()) return;
         addHoveredClickboxMenuEntry(client.getMouseCanvasPosition());
@@ -4592,10 +4606,48 @@ public class RunePartyPlugin extends Plugin
         if (mageArenaSpellModel != null) mageArenaSpellModel.spawn(point);
     }
 
+    public int getMageArenaDurationSeconds()
+    {
+        return config.mageArenaDurationSeconds();
+    }
+
+    private void castMageArenaSpell(WorldPoint target)
+    {
+        if (!minigamePresentation.mageArena().isArenaTile(target)) return;
+        if (minigamePresentation.mageArena().getRoundStartAt() != 0)
+        {
+            minigamePresentation.mageArena().castSpell(target, localRsn());
+            return;
+        }
+        // A real Mage Arena session must wait for the shared server-driven BEGIN flow.
+        if (minigamePresentation.isKeyActive(MAGE_ARENA_KEY)) return;
+        List<String> dodgers = new ArrayList<>();
+        for (Player player : client.getPlayers())
+        {
+            if (player != null && minigamePresentation.mageArena().isArenaTile(player.getWorldLocation()))
+            {
+                dodgers.add(player.getName());
+            }
+        }
+        minigamePresentation.mageArena().setPrototypeDodgers(dodgers, localRsn());
+        minigamePresentation.mageArena().onRoundBegin(false);
+    }
+
+    public String getMageArenaTimerText()
+    {
+        return minigamePresentation == null ? null : minigamePresentation.mageArena().getTimerText();
+    }
+
     public void clearMageArenaSpellEffects()
     {
         // A game reset can originate from the Swing panel.
         if (mageArenaSpellModel != null) clientThread.invoke(mageArenaSpellModel::clear);
+    }
+
+    public List<gay.runescape.runeparty.minigames.MageArenaPresentation.OutAnnouncement> getMageArenaOutAnnouncements()
+    {
+        return minigamePresentation == null ? Collections.emptyList()
+                : minigamePresentation.mageArena().getOutAnnouncements();
     }
 
     /** Plays {@code spotAnimId} directly on {@code rsn}'s own in-game actor -- follows them if they

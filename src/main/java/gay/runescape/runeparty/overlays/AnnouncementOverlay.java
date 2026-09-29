@@ -255,6 +255,8 @@ public class AnnouncementOverlay extends Overlay
         // it" state, so skipping frames is safe.
         if (plugin.isMapShowing()) return null;
         if (!config.showOverlay()) return null;
+        renderMageArenaOut(g);
+        renderMageArenaTimer(g);
         GamePhase phase = plugin.getPhase();
         // ENDED is included so the end-game awards ceremony can still render past the instant the
         // phase flips; every other render* call below is still gated on its own until-timestamp.
@@ -1730,6 +1732,57 @@ public class AnnouncementOverlay extends Overlay
         int secondsLeft = (int) Math.max(0, Math.ceil((endsAt - now) / 1000.0));
         g.setFont(MARIO_PARTY_FONT.deriveFont(TRUE_OR_FALSE_COUNTDOWN_SIZE));
         drawCenteredText(g, String.valueOf(secondsLeft), centerX, y, TRUE_OR_FALSE_COUNTDOWN_COLOR, 1f);
+    }
+
+    private void renderMageArenaOut(Graphics2D graphics)
+    {
+        Graphics2D g = (Graphics2D) graphics.create();
+        try
+        {
+            int centerX = client.getCanvasWidth() / 2;
+            int y = client.getCanvasHeight() / 3;
+            for (gay.runescape.runeparty.minigames.MageArenaPresentation.OutAnnouncement announcement
+                    : plugin.getMageArenaOutAnnouncements())
+            {
+                Float alpha = BannerAnim.fadeAlpha(announcement.getUntil(), DEFAULT_FADE_MS);
+                if (alpha == null) continue;
+                String text = announcement.getRsn() + " Out";
+                g.setFont(MARIO_PARTY_FONT.deriveFont(MINIGAME_TITLE_SIZE));
+                int width = g.getFontMetrics().stringWidth(text);
+                int available = Math.max(1, client.getCanvasWidth() - 40);
+                if (width > available)
+                {
+                    g.setFont(g.getFont().deriveFont(MINIGAME_TITLE_SIZE * available / width));
+                }
+                drawCenteredRainbowText(g, text, RAINBOW_LETTER_COLORS, centerX, y, alpha);
+                y += g.getFontMetrics().getHeight() + 8;
+            }
+        }
+        finally
+        {
+            g.dispose();
+        }
+    }
+
+    private void renderMageArenaTimer(Graphics2D graphics)
+    {
+        String text = plugin.getMageArenaTimerText();
+        if (text == null) return;
+        Graphics2D g = (Graphics2D) graphics.create();
+        try
+        {
+            g.setFont(MARIO_PARTY_FONT.deriveFont(28f));
+            int available = Math.max(1, client.getViewportWidth() - 30);
+            int width = g.getFontMetrics().stringWidth(text);
+            if (width > available) g.setFont(g.getFont().deriveFont(28f * available / width));
+            drawCenteredText(g, text,
+                    client.getViewportXOffset() + client.getViewportWidth() / 2,
+                    client.getViewportYOffset() + 45, TRUE_OR_FALSE_COUNTDOWN_COLOR, 1f);
+        }
+        finally
+        {
+            g.dispose();
+        }
     }
 
     /** Brutus Attack's own "HIT!"/"MISS!" flash -- fires once per resolved dash (a catch or a

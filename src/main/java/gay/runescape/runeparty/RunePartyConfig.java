@@ -3,6 +3,8 @@ package gay.runescape.runeparty;
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
+import net.runelite.client.config.Range;
+import net.runelite.client.config.Units;
 
 @ConfigGroup("runeparty")
 public interface RunePartyConfig extends Config
@@ -71,5 +73,18 @@ public interface RunePartyConfig extends Config
     default boolean enableMageArenaPrototype()
     {
         return true;
+    }
+
+    @Range(min = 1, max = 3600)
+    @Units(Units.SECONDS)
+    @ConfigItem(
+        keyName = "mageArenaDurationSeconds",
+        name = "Mage Arena duration",
+        description = "Local round length in seconds, starting at round begin. Changes apply to the next round. Toggle the prototype off/on to reset.",
+        position = 6
+    )
+    default int mageArenaDurationSeconds()
+    {
+        return 45;
     }
 }
