@@ -61,4 +61,15 @@ public interface RunePartyConfig extends Config
     {
         return true;
     }
+
+    @ConfigItem(
+        keyName = "enableMageArenaPrototype",
+        name = "Enable Mage Arena prototype",
+        description = "Build a local Mage Arena beside you while logged in. Hold Shift and click an arena tile to test spells; no board game is required.",
+        position = 5
+    )
+    default boolean enableMageArenaPrototype()
+    {
+        return true;
+    }
 }

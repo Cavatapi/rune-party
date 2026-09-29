@@ -9,7 +9,6 @@ import net.runelite.api.coords.WorldPoint;
 import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
-import net.runelite.client.ui.overlay.OverlayUtil;
 
 import javax.inject.Inject;
 import java.awt.BasicStroke;
@@ -18,23 +17,15 @@ import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.awt.Polygon;
 import java.awt.Stroke;
+import java.awt.RenderingHints;
 
 public class MageArenaOverlay extends Overlay
 {
     private static final Color ARENA_BORDER =
             new Color(255, 140, 0, 230);
 
-    private static final Color WARNING_FILL =
-            new Color(255, 220, 0, 110);
-
-    private static final Color WARNING_BORDER =
-            new Color(255, 230, 0, 255);
-
-    private static final Color DANGER_FILL =
-            new Color(220, 40, 40, 150);
-
-    private static final Color DANGER_BORDER =
-            new Color(255, 40, 40, 255);
+    private static final int SHADOW_SEGMENTS = 48;
+    private static final double SHADOW_RADIUS = Perspective.LOCAL_TILE_SIZE * 0.44;
 
     private final Client client;
 
@@ -62,31 +53,15 @@ public class MageArenaOverlay extends Overlay
             return null;
         }
 
-        presentation.updateSpells();
-
         // Draw ONE outside orange perimeter.
         drawArenaPerimeter(graphics);
 
         // Only targeted tiles get individually drawn.
         for (WorldPoint point : presentation.getArenaTiles())
         {
-            if (presentation.isDangerTile(point))
+            if (presentation.isWarningTile(point))
             {
-                drawFilledTile(
-                        graphics,
-                        point,
-                        DANGER_FILL,
-                        DANGER_BORDER
-                );
-            }
-            else if (presentation.isWarningTile(point))
-            {
-                drawFilledTile(
-                        graphics,
-                        point,
-                        WARNING_FILL,
-                        WARNING_BORDER
-                );
+                drawWarningShadow(graphics, point);
             }
         }
 
@@ -179,27 +154,49 @@ public class MageArenaOverlay extends Overlay
         );
     }
 
-    private void drawFilledTile(
-            Graphics2D graphics,
-            WorldPoint worldPoint,
-            Color fillColor,
-            Color borderColor)
+    private void drawWarningShadow(Graphics2D graphics, WorldPoint worldPoint)
     {
-        Polygon polygon = getTilePolygon(worldPoint);
-
-        if (polygon == null)
+        if (worldPoint.getPlane() != client.getPlane())
+        {
+            return;
+        }
+        LocalPoint center = LocalPoint.fromWorld(client, worldPoint);
+        if (center == null)
         {
             return;
         }
 
-        graphics.setColor(fillColor);
-        graphics.fillPolygon(polygon);
-
-        OverlayUtil.renderPolygon(
-                graphics,
-                polygon,
-                borderColor
-        );
+        Graphics2D shadow = (Graphics2D) graphics.create();
+        try
+        {
+            shadow.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            // Nested translucent circles give the shadow a soft edge. Project the circle
+            // from the ground, so it follows camera pitch/rotation and terrain height.
+            for (int layer = 0; layer < 6; layer++)
+            {
+                double radius = SHADOW_RADIUS * (1.0 - layer * 0.09);
+                Polygon circle = new Polygon();
+                for (int segment = 0; segment < SHADOW_SEGMENTS; segment++)
+                {
+                    double angle = 2.0 * Math.PI * segment / SHADOW_SEGMENTS;
+                    LocalPoint edge = new LocalPoint(
+                            center.getX() + (int) Math.round(Math.cos(angle) * radius),
+                            center.getY() + (int) Math.round(Math.sin(angle) * radius));
+                    net.runelite.api.Point projected = Perspective.localToCanvas(client, edge, worldPoint.getPlane());
+                    if (projected == null)
+                    {
+                        return;
+                    }
+                    circle.addPoint(projected.getX(), projected.getY());
+                }
+                shadow.setColor(new Color(0, 0, 0, 28));
+                shadow.fillPolygon(circle);
+            }
+        }
+        finally
+        {
+            shadow.dispose();
+        }
     }
 
     private Polygon getTilePolygon(WorldPoint worldPoint)

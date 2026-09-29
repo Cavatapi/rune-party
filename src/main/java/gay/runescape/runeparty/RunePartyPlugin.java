@@ -32,6 +32,7 @@ import gay.runescape.runeparty.items.Items;
 import gay.runescape.runeparty.models.ArenaFireModel;
 import gay.runescape.runeparty.models.BalloonModel;
 import gay.runescape.runeparty.models.HotPotatoExplosionModel;
+import gay.runescape.runeparty.models.MageArenaSpellModel;
 import gay.runescape.runeparty.overlays.AnnouncementOverlay;
 import gay.runescape.runeparty.overlays.ClickClickClickOverlay;
 import gay.runescape.runeparty.overlays.CoinRushScoreboardOverlay;
@@ -1110,6 +1111,7 @@ public class RunePartyPlugin extends Plugin
     private ClickClickClickOverlay clickClickClickOverlay;
     private HotPotatoOverlay hotPotatoOverlay;
     private HotPotatoExplosionModel hotPotatoExplosionModel;
+    private MageArenaSpellModel mageArenaSpellModel;
     private TurfWarsScoreOverlay turfWarsScoreOverlay;
     private SandwichRushHudOverlay sandwichRushHudOverlay;
     private DanceDanceRuneScapeOverlay danceDanceRuneScapeOverlay;
@@ -1152,12 +1154,17 @@ public class RunePartyPlugin extends Plugin
     // (TileOverlay, RunePartyMapOverlay) already falls back to a default color/label on a miss.
     private volatile Map<String, ApiClient.TileTypeOut> tileTypeCatalog = new LinkedHashMap<>();
 
-    public final ExecutorService executor = Executors.newSingleThreadExecutor(r ->
+    public ExecutorService executor = createActionExecutor();
+
+    private static ExecutorService createActionExecutor()
     {
-        Thread t = new Thread(r, "runeparty-actions");
-        t.setDaemon(true);
-        return t;
-    });
+        return Executors.newSingleThreadExecutor(r ->
+        {
+            Thread t = new Thread(r, "runeparty-actions");
+            t.setDaemon(true);
+            return t;
+        });
+    }
 
     // Dedicated to delayed, purely-cosmetic UI timers (see scheduleTurnAnnouncement) -- kept
     // separate from `executor` above so a pending delay can never queue behind (or block) a real
@@ -1167,12 +1174,24 @@ public class RunePartyPlugin extends Plugin
     // schedule their own raw nested delayed callbacks against this, not just through
     // scheduleAfterTurnEffects/armBanner. A caller with no reason to reach it directly (e.g.
     // models/JadEncounter) should still prefer scheduleDelayed instead.
-    public final ScheduledExecutorService uiTimerExec = Executors.newSingleThreadScheduledExecutor(r ->
+    public ScheduledExecutorService uiTimerExec = createUiTimerExecutor();
+
+    private static ScheduledExecutorService createUiTimerExecutor()
     {
-        Thread t = new Thread(r, "runeparty-ui-timer");
-        t.setDaemon(true);
-        return t;
-    });
+        return Executors.newSingleThreadScheduledExecutor(r ->
+        {
+            Thread t = new Thread(r, "runeparty-ui-timer");
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    void initializeExecutors()
+    {
+        // RuneLite reuses this plugin instance when toggling it off and back on.
+        if (executor.isShutdown()) executor = createActionExecutor();
+        if (uiTimerExec.isShutdown()) uiTimerExec = createUiTimerExecutor();
+    }
 
     /** Rolling "nothing turn-concluding should appear before this" gate. Every turn-effect visual
      * with its own on-screen duration -- currently just the coin popup, but meant to grow as more
@@ -1489,6 +1508,7 @@ public class RunePartyPlugin extends Plugin
     protected void startUp()
     {
         log.debug("Rune Party starting up");
+        initializeExecutors();
 
         apiClient = new ApiClient(okHttpClient, gson);
         loadTileTypeCatalog();
@@ -1564,6 +1584,7 @@ public class RunePartyPlugin extends Plugin
         clickClickClickOverlay = new ClickClickClickOverlay(this);
         overlayManager.add(clickClickClickOverlay);
 
+        mageArenaSpellModel = new MageArenaSpellModel(client);
         mageArenaOverlay = new MageArenaOverlay(client);
         mageArenaOverlay.setPresentation(minigamePresentation.mageArena());
         overlayManager.add(mageArenaOverlay);
@@ -1617,33 +1638,33 @@ public class RunePartyPlugin extends Plugin
         if (eventSocket != null) eventSocket.shutdown();
         executor.shutdownNow();
         uiTimerExec.shutdownNow();
-        if (tileOverlay != null) { tileOverlay.clearGoldenGnomeModels(); tileOverlay.clearCoinRushModels(); tileOverlay.clearSandwichItemModels(); tileOverlay.clearPondModels(); tileOverlay.clearTableModels(); overlayManager.remove(tileOverlay); }
+        if (tileOverlay != null) { clientThread.invoke(tileOverlay::clearGoldenGnomeModels); clientThread.invoke(tileOverlay::clearCoinRushModels); clientThread.invoke(tileOverlay::clearSandwichItemModels); clientThread.invoke(tileOverlay::clearPondModels); clientThread.invoke(tileOverlay::clearTableModels); overlayManager.remove(tileOverlay); }
         if (statsOverlay != null) overlayManager.remove(statsOverlay);
         if (coinRushScoreboardOverlay != null) overlayManager.remove(coinRushScoreboardOverlay);
         if (playerOverlay != null) overlayManager.remove(playerOverlay);
         if (announcementOverlay != null) overlayManager.remove(announcementOverlay);
         if (confettiOverlay != null) overlayManager.remove(confettiOverlay);
-        if (jadEncounter != null) { jadEncounter.clear(); overlayManager.remove(jadEncounter); }
-        if (jaddyDuelModel != null) { jaddyDuelModel.clear(); overlayManager.remove(jaddyDuelModel); }
-        if (crabRaveNpcOverlay != null) { crabRaveNpcOverlay.clear(); overlayManager.remove(crabRaveNpcOverlay); }
-        if (wiseOldManNpcOverlay != null) { wiseOldManNpcOverlay.clear(); overlayManager.remove(wiseOldManNpcOverlay); }
-        if (gnomeNpcOverlay != null) { gnomeNpcOverlay.clear(); overlayManager.remove(gnomeNpcOverlay); }
+        if (jadEncounter != null) { clientThread.invoke(jadEncounter::clear); overlayManager.remove(jadEncounter); }
+        if (jaddyDuelModel != null) { clientThread.invoke(jaddyDuelModel::clear); overlayManager.remove(jaddyDuelModel); }
+        if (crabRaveNpcOverlay != null) { clientThread.invoke(crabRaveNpcOverlay::clear); overlayManager.remove(crabRaveNpcOverlay); }
+        if (wiseOldManNpcOverlay != null) { clientThread.invoke(wiseOldManNpcOverlay::clear); overlayManager.remove(wiseOldManNpcOverlay); }
+        if (gnomeNpcOverlay != null) { clientThread.invoke(gnomeNpcOverlay::clear); overlayManager.remove(gnomeNpcOverlay); }
         if (wiseOldManDialogueOverlay != null) { wiseOldManDialogueOverlay.unregister(); overlayManager.remove(wiseOldManDialogueOverlay); }
-        if (itemShopNpcOverlay != null) { itemShopNpcOverlay.clear(); overlayManager.remove(itemShopNpcOverlay); }
+        if (itemShopNpcOverlay != null) { clientThread.invoke(itemShopNpcOverlay::clear); overlayManager.remove(itemShopNpcOverlay); }
         if (itemShopDialogueOverlay != null) { itemShopDialogueOverlay.unregister(); overlayManager.remove(itemShopDialogueOverlay); }
         if (crabRaveHudOverlay != null) overlayManager.remove(crabRaveHudOverlay);
-        if (playerTransformOverlay != null) { playerTransformOverlay.clear(); overlayManager.remove(playerTransformOverlay); }
+        if (playerTransformOverlay != null) { clientThread.invoke(playerTransformOverlay::clear); overlayManager.remove(playerTransformOverlay); }
         if (fishingCatchOverlay != null) overlayManager.remove(fishingCatchOverlay);
         if (runeMatchOverlay != null) overlayManager.remove(runeMatchOverlay);
         if (clickClickClickOverlay != null) overlayManager.remove(clickClickClickOverlay);
         if (mageArenaOverlay != null) overlayManager.remove(mageArenaOverlay);
         if (hotPotatoOverlay != null) overlayManager.remove(hotPotatoOverlay);
-        if (hotPotatoExplosionModel != null) hotPotatoExplosionModel.clear();
+        if (hotPotatoExplosionModel != null) clientThread.invoke(hotPotatoExplosionModel::clear);
         if (turfWarsScoreOverlay != null) overlayManager.remove(turfWarsScoreOverlay);
         if (sandwichRushHudOverlay != null) overlayManager.remove(sandwichRushHudOverlay);
         if (danceDanceRuneScapeOverlay != null) overlayManager.remove(danceDanceRuneScapeOverlay);
         if (danceDanceRuneScapeHudOverlay != null) overlayManager.remove(danceDanceRuneScapeHudOverlay);
-        if (hardcodedCourseLauncherOverlay != null) { hardcodedCourseLauncherOverlay.clear(); overlayManager.remove(hardcodedCourseLauncherOverlay); }
+        if (hardcodedCourseLauncherOverlay != null) { clientThread.invoke(hardcodedCourseLauncherOverlay::clear); overlayManager.remove(hardcodedCourseLauncherOverlay); }
         if (mapOverlay != null) overlayManager.remove(mapOverlay);
         if (navButton != null) clientToolbar.removeNavigation(navButton);
         resetState();
@@ -2300,6 +2321,7 @@ public class RunePartyPlugin extends Plugin
         // ---------------------------------------------------------------------
         if (event.getMenuAction() == MenuAction.WALK &&
                 client.isKeyPressed(KeyCode.KC_SHIFT) &&
+                config.enableMageArenaPrototype() &&
                 minigamePresentation != null &&
                 minigamePresentation.mageArena().isArenaBuilt())
         {
@@ -2464,6 +2486,10 @@ public class RunePartyPlugin extends Plugin
      */
     public void buildMageArenaPrototype()
     {
+        if (!config.enableMageArenaPrototype() || minigamePresentation == null)
+        {
+            return;
+        }
         Player self = client.getLocalPlayer();
 
         if (self == null)
@@ -2534,6 +2560,22 @@ public class RunePartyPlugin extends Plugin
     @Subscribe
     public void onClientTick(ClientTick event)
     {
+        if (minigamePresentation != null && mageArenaSpellModel != null)
+        {
+            if (!config.enableMageArenaPrototype()
+                    || client.getGameState() == net.runelite.api.GameState.LOGIN_SCREEN
+                    || client.getGameState() == net.runelite.api.GameState.HOPPING)
+            {
+                if (minigamePresentation.mageArena().isArenaBuilt()) minigamePresentation.mageArena().reset();
+            }
+            else if (client.getGameState() == net.runelite.api.GameState.LOGGED_IN
+                    && !minigamePresentation.mageArena().isArenaBuilt())
+            {
+                buildMageArenaPrototype();
+            }
+            mageArenaSpellModel.update(minigamePresentation.mageArena().isArenaBuilt());
+            minigamePresentation.mageArena().updateSpells();
+        }
         if (client.isMenuOpen()) return;
         addHoveredClickboxMenuEntry(client.getMouseCanvasPosition());
     }
@@ -2868,12 +2910,6 @@ public class RunePartyPlugin extends Plugin
         standingOnTrackedPositionCached = self != null && selfPlayer != null && isStandingOnTrackedPosition(selfPlayer, self);
         lastKnownLocalPosition = selfPlayer != null ? selfPlayer.getWorldLocation() : null;
 
-        // TEMPORARY: Build the Mage Arena prototype once for visual testing.
-        if (!minigamePresentation.mageArena().isArenaBuilt())
-        {
-            buildMageArenaPrototype();
-        }
-
         // Runs independently of the turn engine below -- a Coin Rush round has no "whose turn is
         // it" at all, every seated player can be racing for a spawn at once, so this can't share
         // the pendingRoll-gated checks the rest of onGameTick uses.
@@ -3121,9 +3157,9 @@ public class RunePartyPlugin extends Plugin
         }
 
         // TEMPORARY Mage Arena prototype.
-        // Adding this RUNELITE entry after "Walk here" makes Cast Spell
-        // the normal left-click action while the cursor is over the arena.
-        if (phase == GamePhase.ACTIVE &&
+        // Offer Cast Spell only while Shift is held; ordinary clicks still walk.
+        if (config.enableMageArenaPrototype() && client.isKeyPressed(KeyCode.KC_SHIFT) &&
+                minigamePresentation != null && client.getTopLevelWorldView() != null &&
                 minigamePresentation.mageArena().isArenaBuilt()) {
             Tile tile = client.getTopLevelWorldView().getSelectedSceneTile();
 
@@ -4548,6 +4584,18 @@ public class RunePartyPlugin extends Plugin
     public void triggerSpotAnimAtWorldPoint(int spotAnimId, WorldPoint point)
     {
         triggerSpotAnimAtWorldPoint(spotAnimId, point, SPOTANIM_DEFAULT_DURATION_CYCLES);
+    }
+
+    /** Called by the Mage Arena presenter on the client tick. */
+    public void triggerMageArenaSpell(WorldPoint point)
+    {
+        if (mageArenaSpellModel != null) mageArenaSpellModel.spawn(point);
+    }
+
+    public void clearMageArenaSpellEffects()
+    {
+        // A game reset can originate from the Swing panel.
+        if (mageArenaSpellModel != null) clientThread.invoke(mageArenaSpellModel::clear);
     }
 
     /** Plays {@code spotAnimId} directly on {@code rsn}'s own in-game actor -- follows them if they

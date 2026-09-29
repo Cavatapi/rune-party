@@ -9,8 +9,8 @@ import java.awt.Graphics2D;
  * One player is the Mage while the remaining players dodge spells
  * inside a 6x5 arena.
  *
- * The Mage targets arena tiles. Targeted tiles warn in yellow before
- * turning red when the spell detonates.
+ * The Mage targets arena tiles. Targeted tiles show a circular shadow before
+ * erupting with the Flames of Zamorak animation when the spell detonates.
  */
 public class MageArenaMinigame implements Minigame
 {
