@@ -24,6 +24,22 @@ import static org.junit.Assert.assertTrue;
  */
 public class RosterReducerTest
 {
+    @Test
+    public void seatedPlayerCountExcludesUnlimitedSpectatorsAndUnjoinedSeats()
+    {
+        RosterReducer reducer = new RosterReducer();
+        java.util.ArrayList<ApiClient.RosterPlayerOut> roster = new java.util.ArrayList<>();
+        for (int i = 0; i < 4; i++) roster.add(rosterPlayer("Player" + i, "PLAYER", true, "" + (i + 1), "1"));
+        for (int i = 0; i < 100; i++) roster.add(rosterPlayer("Viewer" + i, "SPECTATOR", true, "", ""));
+        roster.add(rosterPlayer("Unjoined", "PLAYER", false, "5", "5"));
+        reducer.loadSnapshot(roster);
+        assertEquals(4, reducer.seatedPlayers().size());
+        assertEquals(30, gay.runescape.runeparty.minigames.MageArenaPresentation.ArenaSize
+                .forPlayerCount(reducer.seatedPlayers().size()).getWidth()
+                * gay.runescape.runeparty.minigames.MageArenaPresentation.ArenaSize
+                .forPlayerCount(reducer.seatedPlayers().size()).getHeight());
+    }
+
     private static ApiClient.EventOut event(String type, JsonObject payload)
     {
         ApiClient.EventOut e = new ApiClient.EventOut();

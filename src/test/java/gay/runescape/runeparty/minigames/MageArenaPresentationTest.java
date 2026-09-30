@@ -236,6 +236,49 @@ public class MageArenaPresentationTest
         assertEquals("Players win!", presentation.getTimerText());
     }
 
+    @Test
+    public void generatesAllPlayerCountTiersWithCorrectBounds()
+    {
+        int[][] cases = {{2,4,4}, {3,6,5}, {4,6,5}, {5,7,7}, {6,7,7}, {7,8,8}, {8,8,8}};
+        for (int[] test : cases)
+        {
+            presentation.buildPrototypeArena(target, test[0]);
+            assertTrue(presentation.isArenaBuilt());
+            assertEquals(test[1], presentation.getArenaSize().getWidth());
+            assertEquals(test[2], presentation.getArenaSize().getHeight());
+            assertEquals(test[1] * test[2], presentation.getArenaTiles().size());
+            assertEquals(presentation.getArenaTiles().size(), new java.util.HashSet<>(presentation.getArenaTiles()).size());
+            assertTrue(presentation.isArenaTile(new WorldPoint(3200 + test[1] - 1, 3200 + test[2] - 1, 0)));
+            assertFalse(presentation.isArenaTile(new WorldPoint(3200 + test[1], 3200, 0)));
+            assertFalse(presentation.isArenaTile(new WorldPoint(3200, 3200 + test[2], 0)));
+        }
+    }
+
+    @Test
+    public void sizeIsBoundedAndShrinkingRemovesOldTiles()
+    {
+        presentation.buildPrototypeArena(target, Integer.MAX_VALUE);
+        assertEquals(64, presentation.getArenaTiles().size());
+        presentation.buildPrototypeArena(target, 0);
+        assertEquals(16, presentation.getArenaTiles().size());
+        assertFalse(presentation.isArenaTile(new WorldPoint(3207, 3207, 0)));
+        presentation.buildPrototypeArena(null, 8);
+        assertFalse(presentation.isArenaBuilt());
+        assertTrue(presentation.getArenaTiles().isEmpty());
+    }
+
+    @Test
+    public void emptyDodgerRosterDoesNotAdmitSpectators()
+    {
+        presentation.buildPrototypeArena(target, 2);
+        presentation.setPrototypeDodgers(java.util.Collections.singletonList("Mage"), "Mage");
+        presentation.onRoundBegin(false);
+        presentation.castSpell(target, "Mage");
+        now.addAndGet(MageArenaPresentation.WARNING_MS);
+        assertFalse(presentation.checkPlayerHit("Spectator", target));
+        assertTrue(presentation.getOutAnnouncements().isEmpty());
+    }
+
     private static final class RecordingPlugin extends RunePartyPlugin
     {
         private final List<WorldPoint> detonations = new ArrayList<>();

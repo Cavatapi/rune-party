@@ -107,7 +107,7 @@ public class MageArenaOverlay extends Overlay
              * RuneLite tile polygons normally contain four points.
              *
              * Instead of drawing the whole polygon, we only draw edges
-             * belonging to tiles on the outside of the 6x5 arena.
+             * belonging to tiles on the outside of the arena.
              */
 
             if (point.getY() == minY)

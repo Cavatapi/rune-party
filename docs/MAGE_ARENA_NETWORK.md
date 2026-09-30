@@ -11,7 +11,7 @@ Mario Party rainbow text and fade. Simultaneous eliminations get separate lines.
 These are local observations, not server-confirmed eliminations. Other clients do not
 receive the casts or banners. No HTTP requests, position reports, or WebSocket messages
 are added. Players outside the loaded scene cannot be checked. The standalone prototype
-freezes its dodger roster from players standing in the arena when Start Mage Arena is selected (excluding the starter/mage). With an empty roster, solo animation testing remains available and no winner or payout is assigned.
+freezes its dodger roster from joined, seated PLAYER entries when connected to a game (excluding the starter/mage). Spectators are excluded, regardless of how many are connected. Without a game roster, standing in the arena at Start opts a nearby player into the offline test. With an empty roster, solo animation testing remains available and no winner or payout is assigned.
 Toggle "Enable Mage Arena prototype" off/on to rebuild it and clear eliminations.
 
 ## Proposed backend contract (not yet implemented or deployed)
@@ -81,3 +81,22 @@ responsibilities; MinigamePresentation.handleMinigameEnded renders the server's 
 and rewards. Mage Arena should have its own server outcome logic using its frozen roster
 and confirmed eliminations, and publish MINIGAME_ENDED with the final results/rewards.
 No score or coin payout request has been added to the standalone prototype.
+## Player-count-dependent arena
+
+Counts include the mage and only joined PLAYER seats, never SPECTATOR entries. A game
+may contain any number of spectators while supporting at most eight players.
+
+| Players | Arena |
+| --- | --- |
+| 2 | 4x4 |
+| 3-4 | 6x5 |
+| 5-6 | 7x7 |
+| 7-8 | 8x8 |
+
+Tune the dimensions in MageArenaPresentation.ArenaSize; each dimension is capped at 8.
+Before round begin, roster count changes resize the prototype at its existing southwest
+anchor. Once begun, its size and dodger roster stay fixed until reset, including after
+eliminations. Offline testing uses the Mage Arena test players setting (default 4), not
+the number of arbitrary players visible nearby. With a connected game, only seated
+players can start the prototype; the test-player setting does not override the roster.
+Toggle the prototype off/on to rebuild it after a completed round.

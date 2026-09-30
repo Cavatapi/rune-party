@@ -7,7 +7,7 @@ import java.awt.Graphics2D;
  * Mage Arena
  *
  * One player is the Mage while the remaining players dodge spells
- * inside a 6x5 arena.
+ * inside an arena sized for the player count.
  *
  * The Mage targets arena tiles. Targeted tiles show a circular shadow before
  * erupting with the Flames of Zamorak animation when the spell detonates.

@@ -486,7 +486,7 @@ public class RunePartyPlugin extends Plugin
      * Client-side key for the Mage Arena mini-game.
      *
      * One player acts as the Mage while the remaining players dodge
-     * targeted spells inside a 6x5 arena.
+     * targeted spells inside an arena sized for the player count.
      */
     public static final String MAGE_ARENA_KEY = "mage-arena";
 
@@ -2223,7 +2223,7 @@ public class RunePartyPlugin extends Plugin
      * Adds a Mage Arena spell-cast action to an arena tile.
      *
      * This replaces the normal default "Walk here" left-click while the
-     * cursor is over one of Mage Arena's 30 tiles. Because this is a
+     * cursor is over one of Mage Arena's tiles. Because this is a
      * RUNELITE menu action, clicking casts the spell without causing the
      * local player to walk toward the targeted tile.
      */
@@ -2481,7 +2481,7 @@ public class RunePartyPlugin extends Plugin
     /**
      * TEMPORARY Mage Arena prototype helper.
      *
-     * Builds the local 6x5 arena near the player's current position.
+     * Builds the local player-count-sized arena near the player's current position.
      * This will be removed once Mage Arena receives its arena from
      * Rune Party's real board-swap system.
      */
@@ -2505,14 +2505,21 @@ public class RunePartyPlugin extends Plugin
             return;
         }
 
-        // Put the south-west corner two tiles east of the player.
-        WorldPoint anchor = new WorldPoint(
+        // Keep the same anchor when resizing before a round; initially two tiles east.
+        WorldPoint anchor = minigamePresentation.mageArena().isArenaBuilt()
+                ? minigamePresentation.mageArena().getArenaTiles().get(0) : new WorldPoint(
                 playerPoint.getX() + 2,
                 playerPoint.getY(),
                 playerPoint.getPlane()
         );
 
-        minigamePresentation.mageArena().buildPrototypeArena(anchor);
+        minigamePresentation.mageArena().buildPrototypeArena(anchor, getMageArenaPlayerCount());
+    }
+
+    private int getMageArenaPlayerCount()
+    {
+        int seated = rosterReducer == null ? 0 : rosterReducer.seatedPlayers().size();
+        return Math.max(2, Math.min(8, gameId != null ? seated : config.mageArenaTestPlayerCount()));
     }
 
     private static final String GOLDEN_GNOME_PURCHASE_OPTION = "<col=00FF00>Purchase Golden Gnome</col>";
@@ -2570,7 +2577,9 @@ public class RunePartyPlugin extends Plugin
                 if (minigamePresentation.mageArena().isArenaBuilt()) minigamePresentation.mageArena().reset();
             }
             else if (client.getGameState() == net.runelite.api.GameState.LOGGED_IN
-                    && !minigamePresentation.mageArena().isArenaBuilt())
+                    && (!minigamePresentation.mageArena().isArenaBuilt()
+                    || (minigamePresentation.mageArena().getRoundStartAt() == 0
+                    && minigamePresentation.mageArena().getArenaPlayerCount() != getMageArenaPlayerCount())))
             {
                 buildMageArenaPrototype();
             }
@@ -4622,11 +4631,25 @@ public class RunePartyPlugin extends Plugin
         // A real Mage Arena session must wait for the shared server-driven BEGIN flow.
         if (minigamePresentation.isKeyActive(MAGE_ARENA_KEY)) return;
         List<String> dodgers = new ArrayList<>();
-        for (Player player : client.getPlayers())
+        if (gameId != null)
         {
-            if (player != null && minigamePresentation.mageArena().isArenaTile(player.getWorldLocation()))
+            boolean localIsPlayer = false;
+            for (RosterReducer.RosterEntry entry : rosterReducer.seatedPlayers())
             {
-                dodgers.add(player.getName());
+                dodgers.add(entry.rsn);
+                if (entry.rsn.equalsIgnoreCase(localRsn())) localIsPlayer = true;
+            }
+            if (!localIsPlayer) return;
+        }
+        else
+        {
+            // Offline testing has no server roles: standing in the arena opts into the test.
+            for (Player player : client.getPlayers())
+            {
+                if (player != null && minigamePresentation.mageArena().isArenaTile(player.getWorldLocation()))
+                {
+                    dodgers.add(player.getName());
+                }
             }
         }
         minigamePresentation.mageArena().setPrototypeDodgers(dodgers, localRsn());

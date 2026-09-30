@@ -17,9 +17,40 @@ import java.util.function.IntSupplier;
 
 public final class MageArenaPresentation implements MinigamePresentationFeature
 {
-    public static final int GRID_WIDTH = 6;
-    public static final int GRID_HEIGHT = 5;
-    public static final int EXPECTED_ARENA_TILES = GRID_WIDTH * GRID_HEIGHT;
+    public static final int MAX_ARENA_SIDE = 8;
+
+    /** Tune the four playtest sizes here. Player counts include the mage. */
+    public enum ArenaSize
+    {
+        TWO_PLAYERS(4, 4),
+        THREE_TO_FOUR_PLAYERS(6, 5),
+        FIVE_TO_SIX_PLAYERS(7, 7),
+        SEVEN_TO_EIGHT_PLAYERS(8, 8);
+
+        private final int width;
+        private final int height;
+
+        ArenaSize(int width, int height)
+        {
+            if (width < 1 || height < 1 || width > MAX_ARENA_SIDE || height > MAX_ARENA_SIDE)
+            {
+                throw new IllegalArgumentException("Mage Arena dimensions must be between 1 and 8");
+            }
+            this.width = width;
+            this.height = height;
+        }
+
+        public int getWidth() { return width; }
+        public int getHeight() { return height; }
+
+        public static ArenaSize forPlayerCount(int players)
+        {
+            if (players <= 2) return TWO_PLAYERS;
+            if (players <= 4) return THREE_TO_FOUR_PLAYERS;
+            if (players <= 6) return FIVE_TO_SIX_PLAYERS;
+            return SEVEN_TO_EIGHT_PLAYERS;
+        }
+    }
 
     public static final long CAST_COOLDOWN_MS = 600;
 
@@ -35,6 +66,8 @@ public final class MageArenaPresentation implements MinigamePresentationFeature
     private final IntSupplier durationSeconds;
 
     private final List<WorldPoint> arenaTiles = new ArrayList<>();
+    private ArenaSize arenaSize;
+    private int arenaPlayerCount;
     private final List<SpellCast> activeSpells = new ArrayList<>();
     private final Map<String, OutAnnouncement> eliminatedPlayers = new LinkedHashMap<>();
 
@@ -42,6 +75,7 @@ public final class MageArenaPresentation implements MinigamePresentationFeature
     private volatile long roundEndsAt = 0;
     private boolean roundEnded;
     private final Set<String> dodgers = new HashSet<>();
+    private boolean hasDodgerRoster;
     private boolean mageWon;
     private String mageRsn;
 
@@ -49,6 +83,7 @@ public final class MageArenaPresentation implements MinigamePresentationFeature
     public synchronized void setPrototypeDodgers(List<String> rsns, String casterRsn)
     {
         if (roundEndsAt != 0) return;
+        hasDodgerRoster = true;
         mageRsn = casterRsn == null ? null : normalizeRsn(casterRsn);
         dodgers.clear();
         for (String rsn : rsns)
@@ -81,6 +116,11 @@ public final class MageArenaPresentation implements MinigamePresentationFeature
 
     public synchronized void buildPrototypeArena(WorldPoint anchor)
     {
+        buildPrototypeArena(anchor, 4);
+    }
+
+    public synchronized void buildPrototypeArena(WorldPoint anchor, int playerCount)
+    {
         reset();
 
         if (anchor == null)
@@ -88,9 +128,11 @@ public final class MageArenaPresentation implements MinigamePresentationFeature
             return;
         }
 
-        for (int y = 0; y < GRID_HEIGHT; y++)
+        arenaPlayerCount = Math.max(2, Math.min(8, playerCount));
+        arenaSize = ArenaSize.forPlayerCount(arenaPlayerCount);
+        for (int y = 0; y < arenaSize.getHeight(); y++)
         {
-            for (int x = 0; x < GRID_WIDTH; x++)
+            for (int x = 0; x < arenaSize.getWidth(); x++)
             {
                 arenaTiles.add(new WorldPoint(
                         anchor.getX() + x,
@@ -210,7 +252,7 @@ public final class MageArenaPresentation implements MinigamePresentationFeature
         {
             return false;
         }
-        if (!dodgers.isEmpty() && !dodgers.contains(normalizeRsn(rsn))) return false;
+        if (hasDodgerRoster && !dodgers.contains(normalizeRsn(rsn))) return false;
         long now = clock.getAsLong();
         for (SpellCast spell : activeSpells)
         {
@@ -280,6 +322,8 @@ public final class MageArenaPresentation implements MinigamePresentationFeature
     public synchronized void reset()
     {
         arenaTiles.clear();
+        arenaSize = null;
+        arenaPlayerCount = 0;
         activeSpells.clear();
         eliminatedPlayers.clear();
         roundStartAt = 0;
@@ -288,6 +332,7 @@ public final class MageArenaPresentation implements MinigamePresentationFeature
         mageWon = false;
         dodgers.clear();
         mageRsn = null;
+        hasDodgerRoster = false;
         lastCastAt = 0;
         plugin.clearMageArenaSpellEffects();
     }
@@ -299,8 +344,11 @@ public final class MageArenaPresentation implements MinigamePresentationFeature
 
     public synchronized boolean isArenaBuilt()
     {
-        return arenaTiles.size() == EXPECTED_ARENA_TILES;
+        return arenaSize != null && arenaTiles.size() == arenaSize.getWidth() * arenaSize.getHeight();
     }
+
+    public synchronized int getArenaPlayerCount() { return arenaPlayerCount; }
+    public synchronized ArenaSize getArenaSize() { return arenaSize; }
 
     public synchronized boolean isArenaTile(WorldPoint point)
     {

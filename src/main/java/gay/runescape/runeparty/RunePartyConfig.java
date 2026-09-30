@@ -87,4 +87,16 @@ public interface RunePartyConfig extends Config
     {
         return 45;
     }
+
+    @Range(min = 2, max = 8)
+    @ConfigItem(
+        keyName = "mageArenaTestPlayerCount",
+        name = "Mage Arena test players",
+        description = "Arena size when no seated game roster is available; includes the mage. Updates before round begin. Toggle the prototype off/on to resize after a round.",
+        position = 7
+    )
+    default int mageArenaTestPlayerCount()
+    {
+        return 4;
+    }
 }
